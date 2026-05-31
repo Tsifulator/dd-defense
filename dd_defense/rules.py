@@ -22,16 +22,19 @@ LEGAL CITATIONS (section headings confirmed via eCFR + Cornell LII, May 2026):
     date the charge was last incurred; if not, the billed party need not pay.
   * § 545.5 — The incentive-principle Interpretive Rule (substantive grounds).
 
-⚠ CURRENCY (verify before relying): In 2025 a U.S. Court of Appeals SET ASIDE
-§ 541.4 — the provision restricting WHICH party may be billed — and per FMC notices
-it was removed from the CFR (eff. Dec 29 2025). The rest of Part 541, including
-§ 541.6 and § 541.7, is understood to remain in effect, but confirm the current
-scope (the court touched the "properly issued invoice" framework) with counsel.
+VERIFIED (Cornell LII / eCFR, May 2026): the § 541.6 paragraph structure
+(a) identifying / (b) timing / (c) rate / (d) dispute / (e) certifications, and
+that BOTH certification statements are required — (e)(1) "charges are consistent
+with the FMC's rules" and (e)(2) "the billing party's performance did not cause or
+contribute to the charges". The § 541.7 30-day clock runs from the date the charge
+was last incurred; late issuance means the billed party need not pay.
 
-STILL TO VERIFY against the primary text: the exact paragraph letter within § 541.6
-for each element, the canonical "13-element" grouping, and whether the two
-"certification statement" elements survived into the final rule. Starter wording —
-confirm with counsel. Not legal advice.
+⚠ CURRENCY (confirm with counsel before relying commercially): In 2025 a U.S.
+Court of Appeals SET ASIDE § 541.4 — the provision restricting WHICH party may be
+billed — removed from the CFR (eff. Dec 29 2025). The rest of Part 541, including
+§ 541.6 and § 541.7, remains in effect. This tool does not rely on § 541.4.
+
+Dispute-ground wording here is a drafted starter — review with counsel. Not legal advice.
 """
 from __future__ import annotations
 
@@ -45,33 +48,38 @@ from .util import date_range, parse_date, to_float
 # Layer 1a — required invoice content (presence checks, generated from data)
 # ---------------------------------------------------------------------------
 
-# Required-content elements are in § 541.6 ("Contents of invoice"), which the rule
-# groups into: identifying info, timing info, rate info, and contact/dispute info.
-# The exact paragraph letter within § 541.6 and the canonical "13-element" grouping
-# still need confirmation against the regulation text. The two stmt_* elements are
-# flagged VERIFY — they may not have survived into the final rule.
+# Required-content elements are in § 541.6 ("Contents of invoice"), grouped by the
+# rule into: (a) identifying, (b) timing, (c) rate, (d) dispute, (e) certifications.
+# Paragraph letters below were verified against the § 541.6 text (Cornell LII /
+# eCFR, May 2026); the two certification statements ARE required, at (e)(1)/(e)(2).
+#
+# NOT-YET-CHECKED required elements in § 541.6 (room to extend — their absence is
+# also a facial defect, but the tool does not test for them yet):
+#   * (b) container availability date (imports) / earliest return date (exports)
+#   * (b) the specific date(s) for which the charge is assessed
+#   * (d) a digital means (URL/QR) to a public page describing required documentation
 REQUIRED_ELEMENTS = [
-    # -- identifying information --
-    {"field": "bl_numbers", "label": "Bill of lading number(s)", "citation": "46 CFR § 541.6"},
-    {"field": "container_numbers", "label": "Container number(s)", "citation": "46 CFR § 541.6"},
-    {"field": "port_of_discharge", "label": "Port(s) of discharge", "citation": "46 CFR § 541.6"},
-    {"field": "basis_for_liability", "label": "Basis the billed party is the proper party liable", "citation": "46 CFR § 541.6"},
-    # -- timing information --
-    {"field": "invoice_date", "label": "Invoice date", "citation": "46 CFR § 541.6"},
-    {"field": "due_date", "label": "Invoice due date", "citation": "46 CFR § 541.6"},
-    {"field": "free_time_allowed_days", "label": "Allowed free time (in days)", "citation": "46 CFR § 541.6"},
-    {"field": "free_time_start", "label": "Free time start date", "citation": "46 CFR § 541.6"},
-    {"field": "free_time_end", "label": "Free time end date", "citation": "46 CFR § 541.6"},
-    # -- rate information --
-    {"field": "rate_rule_reference", "label": "Applicable D&D rule the rate is based on", "citation": "46 CFR § 541.6"},
-    {"field": "per_diem_rates", "label": "Applicable per-diem rate(s)", "citation": "46 CFR § 541.6"},
-    {"field": "total_amount_due", "label": "Total amount due", "citation": "46 CFR § 541.6"},
-    # -- contact / dispute information --
-    {"field": "dispute_contact", "label": "Contact for billing disputes / fee mitigation", "citation": "46 CFR § 541.6"},
-    {"field": "mitigation_process", "label": "How (and timeframe) to request mitigation/refund/waiver", "citation": "46 CFR § 541.6"},
-    # -- certification statements (VERIFY these survived into the final rule) --
-    {"field": "stmt_fmc_consistent", "label": "Statement charges are consistent with FMC regulations", "citation": "46 CFR § 541.6 — VERIFY retained"},
-    {"field": "stmt_no_fault", "label": "Statement billing party did not cause the charges", "citation": "46 CFR § 541.6 — VERIFY retained"},
+    # -- (a) identifying information --
+    {"field": "bl_numbers", "label": "Bill of lading number(s)", "citation": "46 CFR § 541.6(a)"},
+    {"field": "container_numbers", "label": "Container number(s)", "citation": "46 CFR § 541.6(a)"},
+    {"field": "port_of_discharge", "label": "Port(s) of discharge", "citation": "46 CFR § 541.6(a)"},
+    {"field": "basis_for_liability", "label": "Basis the billed party is the proper party liable", "citation": "46 CFR § 541.6(a)"},
+    # -- (b) timing information --
+    {"field": "invoice_date", "label": "Invoice date", "citation": "46 CFR § 541.6(b)"},
+    {"field": "due_date", "label": "Invoice due date", "citation": "46 CFR § 541.6(b)"},
+    {"field": "free_time_allowed_days", "label": "Allowed free time (in days)", "citation": "46 CFR § 541.6(b)"},
+    {"field": "free_time_start", "label": "Free time start date", "citation": "46 CFR § 541.6(b)"},
+    {"field": "free_time_end", "label": "Free time end date", "citation": "46 CFR § 541.6(b)"},
+    # -- (c) rate information --
+    {"field": "rate_rule_reference", "label": "Applicable D&D rule the rate is based on", "citation": "46 CFR § 541.6(c)"},
+    {"field": "per_diem_rates", "label": "Applicable per-diem rate(s)", "citation": "46 CFR § 541.6(c)"},
+    {"field": "total_amount_due", "label": "Total amount due", "citation": "46 CFR § 541.6(c)"},
+    # -- (d) dispute information --
+    {"field": "dispute_contact", "label": "Contact for billing disputes / fee mitigation", "citation": "46 CFR § 541.6(d)"},
+    {"field": "mitigation_process", "label": "How (and timeframe) to request mitigation/refund/waiver", "citation": "46 CFR § 541.6(d)"},
+    # -- (e) certification statements (verified present in the final rule) --
+    {"field": "stmt_fmc_consistent", "label": "Statement charges are consistent with FMC regulations", "citation": "46 CFR § 541.6(e)(1)"},
+    {"field": "stmt_no_fault", "label": "Statement billing party's performance did not cause the charges", "citation": "46 CFR § 541.6(e)(2)"},
 ]
 
 _PRESENCE_TEMPLATE = (
