@@ -24,8 +24,12 @@ from .schema import Evidence
 
 def _load_dotenv(path=".env"):
     """Minimal .env loader (no dependency): copy KEY=VALUE lines into the
-    environment if not already set. Lets you keep the API key in a gitignored
-    .env file instead of exporting it every terminal session."""
+    environment. Lets you keep the API key in a gitignored .env file instead of
+    exporting it every terminal session.
+
+    A real value in .env overrides an env var that is *unset or blank* (some
+    shells/harnesses pre-export ANTHROPIC_API_KEY="" which would otherwise
+    shadow the key), but never overrides a non-empty exported value."""
     try:
         with open(path, "r", encoding="utf-8") as fh:
             for raw in fh:
@@ -34,7 +38,10 @@ def _load_dotenv(path=".env"):
                     continue
                 key, _, val = line.partition("=")
                 key, val = key.strip(), val.strip().strip('"').strip("'")
-                if key and key not in os.environ:
+                if not key or not val:
+                    continue
+                existing = os.environ.get(key)
+                if existing is None or existing.strip() == "":
                     os.environ[key] = val
     except FileNotFoundError:
         pass

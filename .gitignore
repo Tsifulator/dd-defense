@@ -14,6 +14,14 @@ venv/
 
 # --- Generated audit outputs ---
 out/
+out_*/
+.preview_url
+
+# --- Invoices (generated mocks AND real/private invoices) ---
+samples/*.pdf
+samples/*.png
+samples/*.jpg
+samples/*.jpeg
 
 # --- Recovered prior-session bytecode (local only) ---
 .recover/

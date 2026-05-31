@@ -1,8 +1,12 @@
-# Core audit/report/letter pipeline needs NOTHING beyond the Python stdlib.
-# These are only required for real invoice EXTRACTION (the --invoice path) and
-# the optional letter --polish step. They are imported lazily.
+# The core audit/report/letter pipeline AND the web preview need NOTHING beyond
+# the Python stdlib. The packages below are imported lazily and are only needed
+# for specific extras:
 
+# -- real invoice EXTRACTION (the --invoice path) + optional letter --polish --
 anthropic>=0.40        # LLM extraction + optional letter polish
 pypdf>=4.0             # text extraction from text-based PDFs
 pypdfium2>=4.0         # render scanned PDF pages to images (permissive license)
 pillow>=10.0           # image handling for the rendered pages
+
+# -- dev/testing only: generate a mock invoice PDF (scripts/make_mock_invoice.py) --
+reportlab>=4.0         # not needed to run audits; only to create test invoices
