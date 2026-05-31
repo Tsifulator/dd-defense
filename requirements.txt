@@ -8,5 +8,10 @@ pypdf>=4.0             # text extraction from text-based PDFs
 pypdfium2>=4.0         # render scanned PDF pages to images (permissive license)
 pillow>=10.0           # image handling for the rendered pages
 
+# -- web app (the upload->report site: python -m dd_defense.webapp) --
+fastapi>=0.110         # web framework
+uvicorn>=0.29          # ASGI server
+python-multipart>=0.0.9  # required by FastAPI to parse file uploads
+
 # -- dev/testing only: generate a mock invoice PDF (scripts/make_mock_invoice.py) --
 reportlab>=4.0         # not needed to run audits; only to create test invoices

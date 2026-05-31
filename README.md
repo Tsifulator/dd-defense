@@ -43,13 +43,36 @@ Outputs land in `out/`: `report.md`, `letter.md`, `report.json`, `parsed_invoice
 
 ```bash
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-...
+# put your key in dd-defense/.env  ->  ANTHROPIC_API_KEY=sk-ant-...
 python -m dd_defense.cli audit --invoice path/to/invoice.pdf --evidence evidence.json
 ```
 
 Extraction uses a cheap vision-capable model (`claude-haiku-4-5`) so scanned
 PDFs/images work. The audit, report, and letter are pure Python — **the only LLM
 calls are extraction and the optional `--polish`** of the letter.
+
+## Web app (upload → report, in the browser)
+
+A thin FastAPI layer over the same engine: drag-drop an invoice, get the report +
+draft letter rendered in the browser. Local-first — binds `127.0.0.1`, the API key
+stays server-side (loaded from `.env`), and uploads are processed in a temp file
+that is deleted immediately (nothing is stored).
+
+```bash
+pip install -r requirements.txt
+python -m dd_defense.webapp            # prints the local URL, e.g. http://127.0.0.1:8800/
+```
+
+- `/`        upload page (drag-drop PDF/PNG/JPG, optional evidence JSON)
+- `/demo`    full report on the bundled sample — **no upload, no API call**
+- `/healthz` liveness + whether a key is configured
+
+There is also a **static preview** (no web framework) that renders the files an
+audit already wrote to a directory:
+
+```bash
+python -m dd_defense.webpreview --out out_mock   # serves report.json + letter.md
+```
 
 ## Project map
 
@@ -63,8 +86,12 @@ dd_defense/
   letter.py     AuditReport -> draft dispute letter (+ optional LLM polish)
   extract.py    invoice file -> ParsedInvoice (lazy LLM/PDF deps) + JSON loader
   cli.py        `python -m dd_defense.cli audit ...`
+  webapp.py     FastAPI upload->report site (thin layer over the engine)
+  webpreview.py shared HTML renderer + static file-preview server
+scripts/
+  make_mock_invoice.py  generate a realistic mock invoice PDF (dev/testing)
 samples/        synthetic defective invoice + evidence
-tests/          deterministic engine tests
+tests/          deterministic engine tests + web-layer tests
 ```
 
 ## Configuring the ruleset
@@ -82,6 +109,10 @@ them. This is the starter ruleset — refine it with your authoritative checklis
 
 ## Status / not yet built
 
-- No persistence yet (writes files). A thin SQLite layer is a natural next step.
-- Single invoice at a time; no batch, auth, or UI.
+- Web app is **local-first and stateless**: no accounts, no database, no billing,
+  no saved history (each upload is processed then discarded). Those are the next
+  steps if/when demand is validated.
+- Not yet deployed. The app is deploy-ready (importable `dd_defense.webapp:app`),
+  but hosting (e.g. Railway, behind a password) hasn't been set up.
+- Single invoice at a time; no batch.
 - Substantive checks are only as good as the evidence supplied.

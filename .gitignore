@@ -19,6 +19,7 @@ venv/
 out/
 out_*/
 .preview_url
+*_webapp_sample_result.html
 
 # --- Invoices (generated mocks AND real/private invoices) ---
 samples/*.pdf

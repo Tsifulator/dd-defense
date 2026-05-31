@@ -133,7 +133,12 @@ def render_page_from_dir(out_dir):
     if os.path.exists(lp):
         with open(lp, encoding="utf-8") as fh:
             letter = fh.read()
+    return render_report_page(r, letter)
 
+
+def render_report_page(r, letter=""):
+    """Render a full audit page from an in-memory report dict + letter string.
+    Shared by the static preview server and the FastAPI web app."""
     cur = r.get("currency") or "USD"
     findings = r.get("findings", [])
     fails = [f for f in findings if f.get("status") == "fail"]
