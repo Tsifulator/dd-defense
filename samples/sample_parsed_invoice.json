@@ -1,0 +1,25 @@
+{
+  "_comment": "Synthetic, deliberately-defective D&D invoice for demoing the audit engine. Missing fields (basis_for_liability, mitigation_process, stmt_no_fault) are OMITTED to simulate 'not on the invoice'. port_of_discharge uses the full {value,confidence} form with low confidence to exercise the REVIEW path.",
+  "invoice_number": "DD-2024-88123",
+  "invoice_date": "2024-10-25",
+  "due_date": "2024-11-09",
+  "issuing_party": "OceanLink Carrier Co.",
+  "billed_party": "FreshHarvest Imports LLC",
+  "currency": "USD",
+  "bl_numbers": ["OLCBL1234567"],
+  "container_numbers": ["MSCU1234567", "MSCU7654321"],
+  "port_of_discharge": {"value": "Port of Los Angeles", "present_on_invoice": true, "confidence": 0.4, "source_text": "faint/blurry header"},
+  "charge_type": "demurrage",
+  "free_time_allowed_days": 5,
+  "free_time_start": "2024-08-26",
+  "free_time_end": "2024-08-30",
+  "rate_rule_reference": "Tariff Rule 1234 / LA Demurrage Schedule",
+  "per_diem_rates": 150,
+  "dispute_contact": "disputes@oceanlink.example / 1-800-555-0100",
+  "stmt_fmc_consistent": "These charges are consistent with applicable FMC regulations.",
+  "total_amount_due": 3600,
+  "line_items": [
+    {"container_number": "MSCU1234567", "charge_type": "demurrage", "start_date": "2024-08-31", "end_date": "2024-09-09", "days_charged": 10, "rate_applied": 150, "line_total": 1500},
+    {"container_number": "MSCU7654321", "charge_type": "demurrage", "start_date": "2024-08-28", "end_date": "2024-09-10", "days_charged": 14, "rate_applied": 150, "line_total": 2250}
+  ]
+}

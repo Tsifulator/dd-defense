@@ -1,0 +1,26 @@
+[project]
+name = "dd-defense"
+version = "0.1.0"
+description = "Audit ocean-carrier demurrage & detention invoices against the FMC rule and draft a dispute letter for the importer."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []  # the audit/report/letter core is stdlib-only
+
+[project.optional-dependencies]
+# Needed only for the real invoice EXTRACTION path (--invoice) and letter --polish.
+extract = [
+    "anthropic>=0.40",
+    "pypdf>=4.0",
+    "pypdfium2>=4.0",
+    "pillow>=10.0",
+]
+
+[project.scripts]
+dd-defense = "dd_defense.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["dd_defense"]
