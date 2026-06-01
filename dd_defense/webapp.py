@@ -116,6 +116,28 @@ document.getElementById('f').addEventListener('submit',function(){
 </body></html>""".replace("__CSS__", _CSS)
 
 
+def _login_page(error=False):
+    err = ('<div class="disclaimer" style="background:#fdecea;border-color:#f0b3ad;color:#9a2b22">'
+           'Incorrect password.</div>') if error else ""
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in — D&D Invoice Defense</title><style>{_CSS}
+.box{{max-width:380px;margin:8vh auto;padding:28px 26px;background:#fff;border:1px solid var(--line);border-radius:12px}}
+.box h2{{margin:0 0 4px;border:0}}.box p{{color:#666;font-size:13px;margin:0 0 18px}}
+input[type=password]{{width:100%;padding:11px 12px;border:1px solid #d8dbe0;border-radius:8px;font-size:15px}}
+button.go{{margin-top:14px;width:100%;background:#0f172a;color:#fff;border:0;border-radius:9px;padding:12px;font:600 15px inherit;cursor:pointer}}
+</style></head><body>
+<header><h1>D&amp;D Invoice Defense</h1></header>
+<div class="box">
+  <h2>Sign in</h2><p>Enter the access password to continue.</p>
+  {err}
+  <form action="/login" method="post">
+    <input type="password" name="password" placeholder="Password" autofocus required>
+    <button class="go" type="submit">Sign in</button>
+  </form>
+</div></body></html>"""
+
+
 def _error_page(title, detail, hint=""):
     hint_html = f'<p class="hint">{_esc(hint)}</p>' if hint else ""
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>D&D — {_esc(title)}</title>
@@ -153,16 +175,59 @@ def _result_with_nav(report_dict, letter, saved_id=None, status=None, recovered=
 
 
 def create_app():
-    from fastapi import FastAPI, Form, UploadFile
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from fastapi import FastAPI, Form, Request, UploadFile
+    from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
     # Re-export the names the endpoint annotations reference so they resolve at
     # module scope (FastAPI inspects them by name).
-    globals().update(Form=Form, UploadFile=UploadFile,
-                     HTMLResponse=HTMLResponse, JSONResponse=JSONResponse)
+    globals().update(Form=Form, Request=Request, UploadFile=UploadFile,
+                     HTMLResponse=HTMLResponse, JSONResponse=JSONResponse,
+                     RedirectResponse=RedirectResponse)
 
     _load_dotenv()  # pull ANTHROPIC_API_KEY from .env if present
+    from . import auth
     app = FastAPI(title="D&D Invoice Defense", docs_url=None, redoc_url=None)
+
+    # Routes reachable without a session. Everything else is gated when a
+    # DD_APP_PASSWORD is configured; with no password set, the app is open
+    # (local-first dev default).
+    _OPEN_PATHS = {"/login", "/healthz", "/favicon.ico"}
+
+    @app.middleware("http")
+    async def _require_login(request, call_next):
+        if auth.auth_enabled() and request.url.path not in _OPEN_PATHS:
+            token = request.cookies.get(auth.COOKIE_NAME)
+            if not auth.verify_token(token):
+                # API-style callers get 401; browsers get redirected to /login
+                accept = request.headers.get("accept", "")
+                if "text/html" not in accept:
+                    return JSONResponse({"detail": "authentication required"}, status_code=401)
+                return RedirectResponse("/login", status_code=303)
+        return await call_next(request)
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_form(error: str = ""):
+        if not auth.auth_enabled():
+            return RedirectResponse("/", status_code=303)
+        return _login_page(error=bool(error))
+
+    @app.post("/login")
+    def login_submit(password: str = Form("")):
+        if not auth.auth_enabled():
+            return RedirectResponse("/", status_code=303)
+        if not auth.check_password(password):
+            return RedirectResponse("/login?error=1", status_code=303)
+        resp = RedirectResponse("/", status_code=303)
+        secure = bool(os.environ.get("DD_COOKIE_SECURE"))
+        resp.set_cookie(auth.COOKIE_NAME, auth.make_token(), httponly=True,
+                        samesite="lax", secure=secure, path="/")
+        return resp
+
+    @app.get("/logout")
+    def logout():
+        resp = RedirectResponse("/login" if auth.auth_enabled() else "/", status_code=303)
+        resp.delete_cookie(auth.COOKIE_NAME, path="/")
+        return resp
 
     def _run_pipeline(inv, evidence, save=False):
         report = run_audit(inv, evidence)

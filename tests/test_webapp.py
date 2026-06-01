@@ -76,5 +76,59 @@ class TestWebApp(unittest.TestCase):
         self.assertIn("No such case", r.text)
 
 
+@unittest.skipUnless(_HAVE_FASTAPI, "fastapi/testclient not installed")
+class TestWebAppAuth(unittest.TestCase):
+    """Auth gate behaviour. Each test builds an app with auth toggled via env."""
+
+    def _client(self, password=None):
+        import importlib
+        os.environ["DD_SECRET_KEY"] = "test-secret"
+        if password:
+            os.environ["DD_APP_PASSWORD"] = password
+        else:
+            os.environ.pop("DD_APP_PASSWORD", None)
+        import dd_defense.auth as auth
+        importlib.reload(auth)
+        import dd_defense.webapp as webapp
+        importlib.reload(webapp)
+        from fastapi.testclient import TestClient
+        return TestClient(webapp.create_app())
+
+    def tearDown(self):
+        os.environ.pop("DD_APP_PASSWORD", None)
+        os.environ.pop("DD_SECRET_KEY", None)
+        import importlib
+        import dd_defense.auth as auth
+        import dd_defense.webapp as webapp
+        importlib.reload(auth)
+        importlib.reload(webapp)
+
+    def test_open_when_no_password(self):
+        c = self._client(password=None)
+        self.assertEqual(c.get("/cases").status_code, 200)
+
+    def test_gated_redirects_browser_to_login(self):
+        c = self._client(password="secret")
+        r = c.get("/cases", follow_redirects=False, headers={"accept": "text/html"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(r.headers.get("location"), "/login")
+
+    def test_gated_api_caller_gets_401(self):
+        c = self._client(password="secret")
+        r = c.get("/cases", follow_redirects=False, headers={"accept": "application/json"})
+        self.assertEqual(r.status_code, 401)
+
+    def test_healthz_open_even_when_gated(self):
+        c = self._client(password="secret")
+        self.assertEqual(c.get("/healthz").status_code, 200)
+
+    def test_login_then_access(self):
+        c = self._client(password="secret")
+        self.assertEqual(c.post("/login", data={"password": "wrong"},
+                                follow_redirects=False).status_code, 303)
+        c.post("/login", data={"password": "secret"})
+        self.assertEqual(c.get("/cases").status_code, 200)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

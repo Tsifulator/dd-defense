@@ -282,7 +282,8 @@ td a{{color:#0f172a;font-weight:600;text-decoration:none}}td a:hover{{text-decor
 <header><h1>D&amp;D Invoice Defense — Savings dashboard</h1>
   <div class="meta">Tracked dispute cases and what carriers actually waived/credited.</div></header>
 <div class="wrap">
-  <nav><a href="/">Upload</a><a href="/cases">Cases</a><a href="/demo">Demo</a></nav>
+  <nav><a href="/">Upload</a><a href="/cases">Cases</a><a href="/demo">Demo</a>
+   <a href="/logout" style="float:right;color:#888">Sign out</a></nav>
   <div class="cards" style="grid-template-columns:repeat(3,1fr)">
     <div class="card" style="border-left:4px solid #1a7f37">
       <div class="lbl">Total recovered</div>
