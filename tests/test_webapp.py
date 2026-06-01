@@ -42,7 +42,8 @@ class TestWebApp(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("DD-2024-88123", r.text)            # bundled sample invoice
         self.assertIn("Draft dispute letter", r.text)
-        self.assertIn("Audit another invoice", r.text)
+        self.assertIn("Audit another", r.text)            # result-page nav link
+        self.assertIn("View all cases", r.text)
 
     def test_audit_rejects_wrong_extension(self):
         r = self.client.post("/audit", files={"invoice": ("notes.txt", b"hello", "text/plain")})
