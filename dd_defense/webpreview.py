@@ -235,6 +235,83 @@ def _empty_page(out_dir):
 
 
 # ---------------------------------------------------------------------------
+# savings dashboard (case portfolio) — shared renderer
+# ---------------------------------------------------------------------------
+
+_STATUS_PILL = {
+    "drafted": "#6b6b6b", "sent": "#1f5fb3", "responded": "#9a6700",
+    "resolved": "#1a7f37", "rejected": "#b3261e", "withdrawn": "#6b6b6b",
+}
+
+
+def render_dashboard(stats, cases, currency="USD"):
+    """Render the portfolio savings dashboard from store.portfolio_stats() output
+    and a list of case rows (dicts). Pure function — no DB access here."""
+    def m(v):
+        return _money(v, currency)
+
+    rows = []
+    for c in cases:
+        ref = "C-%04d" % c["id"]
+        color = _STATUS_PILL.get(c["status"], "#444")
+        rec = c.get("amount_recovered") or 0
+        rec_html = f'<b style="color:#1a7f37">{m(rec)}</b>' if rec else m(rec)
+        rows.append(
+            f'<tr>'
+            f'<td><a href="/cases/{c["id"]}">{ref}</a></td>'
+            f'<td><span class="pill" style="background:{color}">{_esc(c["status"])}</span></td>'
+            f'<td>{_esc(c.get("invoice_number"))}</td>'
+            f'<td>{_esc(c.get("carrier"))}</td>'
+            f'<td class="num">{m(c.get("amount_billed"))}</td>'
+            f'<td class="num">{m(c.get("amount_flagged"))}</td>'
+            f'<td class="num">{rec_html}</td>'
+            f'</tr>'
+        )
+    table = "".join(rows) or '<tr><td colspan="7" class="empty">No cases yet.</td></tr>'
+
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Savings dashboard — D&D Invoice Defense</title><style>{_CSS}
+table{{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:14px}}
+th,td{{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);font-size:14px}}
+th{{background:#f0f1f3;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:#555}}
+td.num,th.num{{text-align:right;font-variant-numeric:tabular-nums}}
+.pill{{color:#fff;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px}}
+td a{{color:#0f172a;font-weight:600;text-decoration:none}}td a:hover{{text-decoration:underline}}
+</style></head><body>
+<header><h1>D&amp;D Invoice Defense — Savings dashboard</h1>
+  <div class="meta">Tracked dispute cases and what carriers actually waived/credited.</div></header>
+<div class="wrap">
+  <nav><a href="/">Upload</a><a href="/cases">Cases</a><a href="/demo">Demo</a></nav>
+  <div class="cards" style="grid-template-columns:repeat(3,1fr)">
+    <div class="card" style="border-left:4px solid #1a7f37">
+      <div class="lbl">Total recovered</div>
+      <div class="big" style="color:#1a7f37">{m(stats['total_recovered'])}</div>
+      <div class="sub">carrier waived / credited across {stats['closed_cases']} closed case(s)</div></div>
+    <div class="card amber"><div class="lbl">Open pipeline (flagged)</div>
+      <div class="big">{m(stats['open_flagged_pipeline'])}</div>
+      <div class="sub">in play on {stats['open_cases']} open case(s)</div></div>
+    <div class="card"><div class="lbl">Recovery rate</div>
+      <div class="big">{stats['recovery_rate']*100:.0f}%</div>
+      <div class="sub">recovered ÷ flagged on closed cases</div></div>
+  </div>
+  <div class="counts">
+    <span><b>{stats['total_cases']}</b> cases</span>
+    <span>total billed <b>{m(stats['total_billed'])}</b></span>
+    <span>total flagged <b>{m(stats['total_flagged'])}</b></span>
+    <span>est. fee @ {stats['fee_rate']*100:.0f}% <b>{m(stats['estimated_fee'])}</b></span>
+  </div>
+  <table>
+    <thead><tr><th>Case</th><th>Status</th><th>Invoice</th><th>Carrier</th>
+      <th class="num">Billed</th><th class="num">Flagged</th><th class="num">Recovered</th></tr></thead>
+    <tbody>{table}</tbody>
+  </table>
+  <div class="foot">“Recovered” is what the carrier actually waived or credited — your proof of savings.
+   Automated analysis for the importer's review; not legal advice.</div>
+</div></body></html>"""
+
+
+# ---------------------------------------------------------------------------
 # server
 # ---------------------------------------------------------------------------
 

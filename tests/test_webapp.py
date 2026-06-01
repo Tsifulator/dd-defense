@@ -63,6 +63,17 @@ class TestWebApp(unittest.TestCase):
         r = self.client.post("/audit")
         self.assertEqual(r.status_code, 422)  # FastAPI validation: missing file field
 
+    def test_cases_dashboard_renders(self):
+        r = self.client.get("/cases")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Total recovered", r.text)
+        self.assertIn("Recovery rate", r.text)
+
+    def test_missing_case_is_404(self):
+        r = self.client.get("/cases/999999")
+        self.assertEqual(r.status_code, 404)
+        self.assertIn("No such case", r.text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -83,7 +83,15 @@ def cmd_audit(args):
     _write(os.path.join(args.out, "letter.md"), letter)
     _write(os.path.join(args.out, "parsed_invoice.json"), json.dumps(inv.to_dict(), indent=2))
 
-    # 4. console summary
+    # 4. optionally save as a tracked case
+    saved_id = None
+    if getattr(args, "save", False):
+        from . import store
+        conn = store.connect(args.db)
+        saved_id = store.create_case(conn, report.to_dict(), letter=letter)
+        conn.close()
+
+    # 5. console summary
     c = report.currency or "USD"
     print(f"\nAudited invoice {report.invoice_number or '(unknown)'} — {report.issuing_party or ''}")
     if report.amount_obligation_eliminated:
@@ -91,7 +99,11 @@ def cmd_audit(args):
     print(f"  additional disputable:        {c} {report.amount_disputable:,.2f}")
     fails = sum(1 for f in report.findings if f.status == "fail")
     print(f"  {fails} disputable finding(s), {report.needs_evidence_count} pending evidence")
-    print(f"  -> {args.out}/report.md, letter.md, report.json\n")
+    print(f"  -> {args.out}/report.md, letter.md, report.json")
+    if saved_id:
+        from .store import case_ref
+        print(f"  saved as case {case_ref(saved_id)} in {args.db}")
+    print()
     return 0
 
 
@@ -100,9 +112,99 @@ def _write(path, text):
         fh.write(text)
 
 
+def _money(v, c):
+    return f"{c} {v:,.2f}" if v is not None else "n/a"
+
+
+def cmd_cases(args):
+    """List tracked cases + a portfolio rollup."""
+    from . import store
+    conn = store.connect(args.db)
+    rows = store.list_cases(conn, status=args.status)
+    s = store.portfolio_stats(conn, fee_rate=args.fee_rate)
+    conn.close()
+    if not rows:
+        print(f"No cases yet in {args.db}. Run: audit --invoice ... --save")
+        return 0
+    print(f"\n{'CASE':8} {'STATUS':10} {'INVOICE':18} {'CARRIER':22} {'BILLED':>12} {'FLAGGED':>12} {'RECOVERED':>12}")
+    print("-" * 98)
+    for cse in rows:
+        print(f"{store.case_ref(cse['id']):8} {cse['status']:10} "
+              f"{(cse['invoice_number'] or '')[:18]:18} {(cse['carrier'] or '')[:22]:22} "
+              f"{cse['amount_billed']:>12,.2f} {cse['amount_flagged']:>12,.2f} {cse['amount_recovered']:>12,.2f}")
+    print("-" * 98)
+    print(f"\nPortfolio ({s['total_cases']} cases — {s['open_cases']} open, {s['closed_cases']} closed):")
+    print(f"  total billed:      {s['total_billed']:>14,.2f}")
+    print(f"  total flagged:     {s['total_flagged']:>14,.2f}  (in play across all cases)")
+    print(f"  open pipeline:     {s['open_flagged_pipeline']:>14,.2f}  (flagged on still-open cases)")
+    print(f"  TOTAL RECOVERED:   {s['total_recovered']:>14,.2f}  (carrier waived/credited)")
+    print(f"  recovery rate:     {s['recovery_rate']*100:>13.1f}%  (recovered / flagged on closed cases)")
+    print(f"  est. fee @ {s['fee_rate']*100:.0f}%:    {s['estimated_fee']:>14,.2f}\n")
+    return 0
+
+
+def cmd_case(args):
+    """Show one case in detail, with its event history."""
+    from . import store
+    conn = store.connect(args.db)
+    cse = store.get_case(conn, args.id)
+    if not cse:
+        conn.close()
+        print(f"No case {args.id} in {args.db}", file=sys.stderr)
+        return 1
+    cur = cse["currency"] or "USD"
+    print(f"\n{store.case_ref(cse['id'])}  [{cse['status']}]")
+    print(f"  invoice:   {cse['invoice_number']}   carrier: {cse['carrier']}")
+    print(f"  importer:  {cse['importer']}")
+    print(f"  billed:    {_money(cse['amount_billed'], cur)}")
+    print(f"  flagged:   {_money(cse['amount_flagged'], cur)}")
+    print(f"  recovered: {_money(cse['amount_recovered'], cur)}")
+    if cse["notes"]:
+        print("  notes:\n    " + cse["notes"].replace("\n", "\n    "))
+    print("  history:")
+    for e in store.get_events(conn, cse["id"]):
+        print(f"    {e['at']}  {e['event']}  {e['detail']}")
+    conn.close()
+    print()
+    return 0
+
+
+def cmd_status(args):
+    from . import store
+    conn = store.connect(args.db)
+    try:
+        store.set_status(conn, args.id, args.new_status, note=args.note or "")
+    except (KeyError, ValueError) as ex:
+        conn.close()
+        print(f"error: {ex}", file=sys.stderr)
+        return 1
+    conn.close()
+    from .store import case_ref
+    print(f"{case_ref(args.id)} -> {args.new_status}")
+    return 0
+
+
+def cmd_recover(args):
+    """Record what the carrier actually waived/credited (closes the case)."""
+    from . import store
+    conn = store.connect(args.db)
+    try:
+        store.set_recovered(conn, args.id, args.amount, note=args.note or "")
+    except KeyError as ex:
+        conn.close()
+        print(f"error: {ex}", file=sys.stderr)
+        return 1
+    cse = store.get_case(conn, args.id)
+    conn.close()
+    print(f"{store.case_ref(args.id)}: recovered {args.amount:,.2f} -> {cse['status']}")
+    return 0
+
+
 def main(argv=None):
     _load_dotenv()  # pick up ANTHROPIC_API_KEY from a local .env if present
-    p = argparse.ArgumentParser(prog="dd_defense", description="Audit a D&D invoice against the FMC ruleset.")
+    from .store import DEFAULT_DB
+    _STATUSES = ("drafted", "sent", "responded", "resolved", "rejected", "withdrawn")
+    p = argparse.ArgumentParser(prog="dd_defense", description="Audit D&D invoices and track dispute outcomes.")
     sub = p.add_subparsers(dest="command", required=True)
 
     a = sub.add_parser("audit", help="audit one invoice and draft a dispute letter")
@@ -113,7 +215,34 @@ def main(argv=None):
     a.add_argument("--out", default="out", help="output directory (default: out)")
     a.add_argument("--extract-model", default="claude-haiku-4-5", help="model for extraction")
     a.add_argument("--polish", action="store_true", help="LLM-polish the letter tone (needs API key)")
+    a.add_argument("--save", action="store_true", help="save this audit as a tracked case")
+    a.add_argument("--db", default=DEFAULT_DB, help=f"case database path (default: {DEFAULT_DB})")
     a.set_defaults(func=cmd_audit)
+
+    lc = sub.add_parser("cases", help="list tracked cases + portfolio savings rollup")
+    lc.add_argument("--status", choices=_STATUSES)
+    lc.add_argument("--fee-rate", type=float, default=0.20, help="contingency fee rate for the estimate (default 0.20)")
+    lc.add_argument("--db", default=DEFAULT_DB)
+    lc.set_defaults(func=cmd_cases)
+
+    sc = sub.add_parser("case", help="show one case in detail")
+    sc.add_argument("id", type=int)
+    sc.add_argument("--db", default=DEFAULT_DB)
+    sc.set_defaults(func=cmd_case)
+
+    st = sub.add_parser("status", help="change a case's status")
+    st.add_argument("id", type=int)
+    st.add_argument("new_status", choices=_STATUSES)
+    st.add_argument("--note", default="")
+    st.add_argument("--db", default=DEFAULT_DB)
+    st.set_defaults(func=cmd_status)
+
+    rec = sub.add_parser("recover", help="record the amount the carrier waived/credited (closes the case)")
+    rec.add_argument("id", type=int)
+    rec.add_argument("amount", type=float)
+    rec.add_argument("--note", default="")
+    rec.add_argument("--db", default=DEFAULT_DB)
+    rec.set_defaults(func=cmd_recover)
 
     args = p.parse_args(argv)
     return args.func(args)

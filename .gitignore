@@ -21,6 +21,12 @@ out_*/
 .preview_url
 *_webapp_sample_result.html
 
+# --- Case database (real client data — never commit) ---
+data/
+*.db
+*.sqlite
+*.sqlite3
+
 # --- Invoices (generated mocks AND real/private invoices) ---
 samples/*.pdf
 samples/*.png

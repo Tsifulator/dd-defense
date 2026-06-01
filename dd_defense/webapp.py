@@ -25,7 +25,7 @@ from typing import Optional
 from .audit import run_audit
 from .letter import draft_letter
 from .schema import Evidence
-from .webpreview import _CSS, _esc, render_report_page
+from .webpreview import _CSS, _esc, render_dashboard, render_report_page
 
 try:
     from .cli import _load_dotenv
@@ -41,6 +41,9 @@ _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_PKG_DIR)
 _SAMPLE_INVOICE_JSON = os.path.join(_ROOT, "samples", "sample_parsed_invoice.json")
 _SAMPLE_EVIDENCE_JSON = os.path.join(_ROOT, "samples", "sample_evidence.json")
+
+# Case database. Overridable via env (e.g. a mounted volume in deployment).
+DB_PATH = os.environ.get("DD_DB_PATH", os.path.join(_ROOT, "data", "cases.db"))
 
 
 # ---------------------------------------------------------------------------
@@ -127,11 +130,20 @@ a.back{{color:#1f5fb3}}</style></head><body>
 </div></body></html>"""
 
 
-def _result_with_nav(report_dict, letter):
+def _result_with_nav(report_dict, letter, saved_id=None, status=None, recovered=0):
     html = render_report_page(report_dict, letter)
-    # add a small "audit another" link right after the disclaimer
-    inject = ('<p style="margin:4px 0 0"><a href="/" style="color:#1f5fb3;text-decoration:none">'
-              '← Audit another invoice</a></p>')
+    bits = ['<a href="/" style="color:#1f5fb3;text-decoration:none">← Audit another</a>',
+            '<a href="/cases" style="color:#1f5fb3;text-decoration:none">View all cases →</a>']
+    if saved_id:
+        ref = "C-%04d" % saved_id
+        tag = f"saved as {ref}"
+        if status:
+            tag += f" · status: {_esc(status)}"
+        if recovered:
+            tag += f" · recovered {recovered:,.2f}"
+        bits.insert(0, f'<b>{tag}</b>')
+    inject = '<p style="margin:6px 0 0;display:flex;gap:16px;flex-wrap:wrap">' + "".join(
+        f'<span>{b}</span>' for b in bits) + '</p>'
     return html.replace('</div>\n\n  <nav>', '</div>' + inject + '\n\n  <nav>', 1)
 
 
@@ -152,14 +164,44 @@ def create_app():
     _load_dotenv()  # pull ANTHROPIC_API_KEY from .env if present
     app = FastAPI(title="D&D Invoice Defense", docs_url=None, redoc_url=None)
 
-    def _run_pipeline(inv, evidence):
+    def _run_pipeline(inv, evidence, save=False):
         report = run_audit(inv, evidence)
         letter = draft_letter(report)
-        return _result_with_nav(report.to_dict(), letter)
+        rd = report.to_dict()
+        saved_id = None
+        if save:
+            from . import store
+            conn = store.connect(DB_PATH)
+            saved_id = store.create_case(conn, rd, letter=letter)
+            conn.close()
+        return _result_with_nav(rd, letter, saved_id)
 
     @app.get("/", response_class=HTMLResponse)
     def home():
         return _UPLOAD_PAGE
+
+    @app.get("/cases", response_class=HTMLResponse)
+    def cases():
+        from . import store
+        conn = store.connect(DB_PATH)
+        rows = store.list_cases(conn)
+        stats = store.portfolio_stats(conn)
+        conn.close()
+        cur = rows[0]["currency"] if rows else "USD"
+        return render_dashboard(stats, rows, currency=cur)
+
+    @app.get("/cases/{case_id}", response_class=HTMLResponse)
+    def case_detail(case_id: int):
+        from . import store
+        conn = store.connect(DB_PATH)
+        c = store.get_case(conn, case_id)
+        conn.close()
+        if not c:
+            return HTMLResponse(_error_page("No such case", f"Case {case_id} was not found."),
+                                status_code=404)
+        report = json.loads(c["report_json"]) if c.get("report_json") else {}
+        return _result_with_nav(report, c.get("letter_text") or "", case_id, status=c["status"],
+                                recovered=c.get("amount_recovered") or 0)
 
     @app.get("/healthz", response_class=JSONResponse)
     def healthz():
@@ -228,7 +270,7 @@ def create_app():
                     "Could not read the invoice", str(ex),
                     "If this is a scanned image, make sure it is legible. You can also try a PDF."),
                     status_code=502)
-            return _run_pipeline(inv, ev_obj)
+            return _run_pipeline(inv, ev_obj, save=True)
         finally:
             try:
                 os.unlink(tmp.name)
