@@ -60,6 +60,15 @@ class TestWebApp(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("Evidence JSON is invalid", r.text)
 
+    def test_audit_rejects_content_not_matching_magic(self):
+        # .pdf extension but the bytes are not a PDF/PNG/JPEG -> 400 content check
+        r = self.client.post(
+            "/audit",
+            files={"invoice": ("inv.pdf", b"just plain text, not a pdf", "application/pdf")},
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Unreadable file", r.text)
+
     def test_audit_requires_a_file(self):
         r = self.client.post("/audit")
         self.assertEqual(r.status_code, 422)  # FastAPI validation: missing file field

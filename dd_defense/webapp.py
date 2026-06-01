@@ -36,6 +36,32 @@ except Exception:  # pragma: no cover
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB — invoices are small; guards against abuse
 ALLOWED_EXT = (".pdf", ".png", ".jpg", ".jpeg")
 
+# Per-client rate limit on the paid /audit endpoint (each upload spends API
+# tokens). Simple in-process sliding window — fine for a single instance; a
+# multi-instance deploy would move this to Redis.
+RATE_LIMIT_MAX = int(os.environ.get("DD_RATE_LIMIT_MAX", "20"))      # uploads...
+RATE_LIMIT_WINDOW = int(os.environ.get("DD_RATE_LIMIT_WINDOW", "3600"))  # ...per hour
+
+
+def _monotonic():
+    import time
+    return time.monotonic()
+
+
+class _RateLimiter:
+    def __init__(self, max_hits, window_s):
+        self.max_hits, self.window = max_hits, window_s
+        self._hits = {}  # key -> list[timestamps]
+
+    def allow(self, key, now):
+        bucket = [t for t in self._hits.get(key, []) if now - t < self.window]
+        if len(bucket) >= self.max_hits:
+            self._hits[key] = bucket
+            return False, 0
+        bucket.append(now)
+        self._hits[key] = bucket
+        return True, self.max_hits - len(bucket)
+
 # Resolve sample paths relative to the project root (parent of this package).
 _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_PKG_DIR)
@@ -187,6 +213,7 @@ def create_app():
     _load_dotenv()  # pull ANTHROPIC_API_KEY from .env if present
     from . import auth
     app = FastAPI(title="D&D Invoice Defense", docs_url=None, redoc_url=None)
+    _RATE = _RateLimiter(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
 
     # Routes reachable without a session. Everything else is gated when a
     # DD_APP_PASSWORD is configured; with no password set, the app is open
@@ -286,7 +313,17 @@ def create_app():
             return HTMLResponse(_error_page("Demo failed", str(ex)), status_code=500)
 
     @app.post("/audit", response_class=HTMLResponse)
-    async def audit(invoice: UploadFile, evidence: Optional[str] = Form(default=None)):
+    async def audit(request: Request, invoice: UploadFile, evidence: Optional[str] = Form(default=None)):
+        # rate limit (per client IP) — protects the paid endpoint from abuse
+        client_ip = request.client.host if request.client else "unknown"
+        ok, _remaining = _RATE.allow(client_ip, _monotonic())
+        if not ok:
+            return HTMLResponse(_error_page(
+                "Rate limit reached",
+                f"More than {RATE_LIMIT_MAX} uploads in the last "
+                f"{RATE_LIMIT_WINDOW // 60} minutes from your address.",
+                "Please wait a bit and try again."), status_code=429)
+
         # validate extension
         name = (invoice.filename or "").lower()
         if not name.endswith(ALLOWED_EXT):
@@ -301,6 +338,15 @@ def create_app():
             return HTMLResponse(_error_page(
                 "File too large", f"The file is {len(data)//(1024*1024)} MB; the limit is "
                 f"{MAX_UPLOAD_BYTES//(1024*1024)} MB."), status_code=413)
+
+        # validate CONTENT by magic bytes (not just the filename extension)
+        from .extract import sniff_filetype
+        if sniff_filetype(data) is None:
+            return HTMLResponse(_error_page(
+                "Unreadable file",
+                "The file's contents don't look like a PDF, PNG, or JPEG.",
+                "It may be corrupt or mislabeled. Re-export the invoice and try again."),
+                status_code=400)
 
         # parse optional evidence JSON
         ev_obj = None
@@ -327,14 +373,20 @@ def create_app():
             tmp.write(data)
             tmp.flush()
             tmp.close()
-            from .extract import extract_from_file
+            from .extract import ExtractionError, extract_from_file
             try:
                 inv = extract_from_file(tmp.name)
-            except Exception as ex:
+            except ExtractionError as ex:
                 return HTMLResponse(_error_page(
                     "Could not read the invoice", str(ex),
                     "If this is a scanned image, make sure it is legible. You can also try a PDF."),
                     status_code=502)
+            except Exception as ex:  # unexpected — don't leak internals
+                return HTMLResponse(_error_page(
+                    "Unexpected error while reading the invoice",
+                    "Something went wrong during extraction.",
+                    "Please try again; if it persists, check the server logs."),
+                    status_code=500)
             return _run_pipeline(inv, ev_obj, save=True)
         finally:
             try:

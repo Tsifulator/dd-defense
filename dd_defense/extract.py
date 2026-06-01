@@ -79,6 +79,35 @@ def load_parsed(path):
         return ParsedInvoice.from_dict(json.load(fh))
 
 
+# Magic bytes for the formats we accept. Validating content (not just the
+# filename extension) stops a mislabeled or corrupt upload from reaching the
+# (paid) extractor and failing in a confusing way.
+_MAGIC = {
+    b"%PDF": "pdf",
+    b"\x89PNG\r\n\x1a\n": "png",
+    b"\xff\xd8\xff": "jpeg",
+}
+
+
+def sniff_filetype(data):
+    """Return 'pdf' | 'png' | 'jpeg' from the leading bytes, or None if unknown."""
+    if not data:
+        return None
+    head = data[:16]
+    for magic, kind in _MAGIC.items():
+        if head.startswith(magic):
+            return kind
+    # PDFs occasionally carry leading whitespace/BOM before %PDF
+    if b"%PDF" in data[:1024]:
+        return "pdf"
+    return None
+
+
+class ExtractionError(RuntimeError):
+    """Raised when an invoice cannot be read into structured fields. The message
+    is safe to show a user."""
+
+
 def _pdf_text(path):
     try:
         from pypdf import PdfReader
@@ -112,56 +141,115 @@ def _render_first_pages_png(path, max_pages=3):
     return out
 
 
-def extract_from_file(path, model="claude-haiku-4-5", api_key=None, max_pages=3):
-    """Extract a ParsedInvoice from a PDF/image using a cheap vision model."""
+def _build_content(path, kind, max_pages):
+    """Assemble the message content blocks (text or images) for the model.
+    Returns (content_list, raw_text). Raises ExtractionError if nothing usable."""
+    import base64
+
+    content = []
+    text = _pdf_text(path) if kind == "pdf" else ""
+
+    if text and len(text.strip()) > 200:
+        # Text-based PDF: cheapest path, no image tokens.
+        content.append({"type": "text", "text": "Invoice text:\n\n" + text})
+        return content, text
+
+    # Scanned PDF or image file -> send page images.
+    if kind == "pdf":
+        images = _render_first_pages_png(path, max_pages)
+        medias = ["image/png"] * len(images)
+        if not images:
+            raise ExtractionError(
+                "This looks like a scanned PDF, but the page images could not be "
+                "rendered. Ensure pypdfium2 + pillow are installed, or upload a clearer file.")
+    else:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        media = "image/png" if kind == "png" else "image/jpeg"
+        images, medias = [raw], [media]
+
+    for img, media in zip(images, medias):
+        content.append({"type": "image", "source": {
+            "type": "base64", "media_type": media,
+            "data": base64.standard_b64encode(img).decode("ascii")}})
+    content.append({"type": "text",
+                    "text": "Extract the D&D invoice fields from the image(s)."})
+    return content, text
+
+
+def extract_from_file(path, model="claude-haiku-4-5", api_key=None, max_pages=5, max_retries=2):
+    """Extract a ParsedInvoice from a PDF/image using a cheap vision model.
+
+    Robustness:
+      * validates file CONTENT by magic bytes (not just the extension);
+      * text-PDF fast path, image fallback for scans/photos, up to `max_pages`;
+      * retries transient API errors with exponential backoff;
+      * raises ExtractionError with a user-safe message on give-up.
+    """
     import anthropic  # lazy
 
     key = api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set (or pass api_key=...).")
+        raise ExtractionError("No API key configured (set ANTHROPIC_API_KEY).")
+
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(2048)
+    except OSError as ex:
+        raise ExtractionError(f"Could not open the uploaded file: {ex}")
+
+    kind = sniff_filetype(head)
+    if kind is None:
+        raise ExtractionError(
+            "The file does not look like a PDF, PNG, or JPEG. Please upload a real "
+            "invoice file (a mislabeled or corrupt file can cause this).")
+
+    content, text = _build_content(path, kind, max_pages)
     client = anthropic.Anthropic(api_key=key)
 
-    content = []
-    is_pdf = str(path).lower().endswith(".pdf")
-    text = _pdf_text(path) if is_pdf else ""
+    last_err = None
+    for attempt in range(max_retries + 1):
+        try:
+            msg = client.messages.create(
+                model=model,
+                max_tokens=2000,
+                system=_SYSTEM,
+                tools=[{"name": "emit_invoice", "description": "Return the structured invoice.",
+                        "input_schema": _TOOL_SCHEMA}],
+                tool_choice={"type": "tool", "name": "emit_invoice"},
+                messages=[{"role": "user", "content": content}],
+            )
+            for block in msg.content:
+                if getattr(block, "type", None) == "tool_use":
+                    data = dict(block.input)
+                    data["raw_text"] = text
+                    return ParsedInvoice.from_dict(data)
+            raise ExtractionError("The model did not return structured invoice data. Try re-running.")
+        except ExtractionError:
+            raise
+        except Exception as ex:  # network / rate-limit / transient API errors
+            last_err = ex
+            transient = _is_transient(ex)
+            if attempt < max_retries and transient:
+                _sleep_backoff(attempt)
+                continue
+            break
 
-    if text and len(text.strip()) > 200:
-        content.append({"type": "text", "text": "Invoice text:\n\n" + text})
-    else:
-        # scanned PDF or image -> send images
-        import base64
-        images = _render_first_pages_png(path, max_pages) if is_pdf else None
-        if images is None:  # raw image file
-            with open(path, "rb") as fh:
-                raw = fh.read()
-            ext = str(path).lower().rsplit(".", 1)[-1]
-            media = "image/png" if ext == "png" else "image/jpeg"
-            images = [raw]
-            medias = [media]
-        else:
-            medias = ["image/png"] * len(images)
-        if not images:
-            raise RuntimeError(
-                "Could not read text or render images from the file. Install extraction "
-                "extras: pip install pypdf pypdfium2 pillow")
-        for img, media in zip(images, medias):
-            content.append({"type": "image", "source": {
-                "type": "base64", "media_type": media,
-                "data": base64.standard_b64encode(img).decode("ascii")}})
-        content.append({"type": "text", "text": "Extract the D&D invoice fields from the image(s)."})
+    raise ExtractionError(f"Extraction failed after {max_retries + 1} attempt(s): {last_err}")
 
-    msg = client.messages.create(
-        model=model,
-        max_tokens=2000,
-        system=_SYSTEM,
-        tools=[{"name": "emit_invoice", "description": "Return the structured invoice.",
-                "input_schema": _TOOL_SCHEMA}],
-        tool_choice={"type": "tool", "name": "emit_invoice"},
-        messages=[{"role": "user", "content": content}],
-    )
-    for block in msg.content:
-        if getattr(block, "type", None) == "tool_use":
-            data = dict(block.input)
-            data["raw_text"] = text
-            return ParsedInvoice.from_dict(data)
-    raise RuntimeError("Model did not return a structured invoice.")
+
+def _is_transient(ex):
+    """Heuristic: retry on rate-limit / overloaded / 5xx / timeouts."""
+    name = type(ex).__name__.lower()
+    if any(k in name for k in ("ratelimit", "overloaded", "timeout", "connection", "apistatus", "internalserver")):
+        return True
+    status = getattr(ex, "status_code", None)
+    if status in (408, 409, 429, 500, 502, 503, 504):
+        return True
+    msg = str(ex).lower()
+    return any(k in msg for k in ("overloaded", "rate limit", "timeout", "temporarily"))
+
+
+def _sleep_backoff(attempt):
+    import time
+    time.sleep(min(2 ** attempt, 8))  # 1s, 2s, 4s, capped at 8s
