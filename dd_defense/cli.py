@@ -83,6 +83,20 @@ def cmd_audit(args):
     _write(os.path.join(args.out, "letter.md"), letter)
     _write(os.path.join(args.out, "parsed_invoice.json"), json.dumps(inv.to_dict(), indent=2))
 
+    # 3b. optional PDF export of the letter + full report
+    pdf_written = False
+    if getattr(args, "pdf", False):
+        try:
+            from . import pdfout
+            rd = report.to_dict()
+            with open(os.path.join(args.out, "letter.pdf"), "wb") as fh:
+                fh.write(pdfout.letter_pdf_bytes(rd, letter))
+            with open(os.path.join(args.out, "report.pdf"), "wb") as fh:
+                fh.write(pdfout.report_pdf_bytes(rd, letter))
+            pdf_written = True
+        except ImportError:
+            print("  (PDF export skipped: pip install reportlab)", file=sys.stderr)
+
     # 4. optionally save as a tracked case
     saved_id = None
     if getattr(args, "save", False):
@@ -101,6 +115,8 @@ def cmd_audit(args):
     fails = sum(1 for f in report.findings if f.status == "fail")
     print(f"  {fails} disputable finding(s), {report.needs_evidence_count} pending evidence")
     print(f"  -> {args.out}/report.md, letter.md, report.json")
+    if pdf_written:
+        print(f"  -> {args.out}/letter.pdf, report.pdf")
     if saved_id:
         from .store import case_ref
         print(f"  saved as case {case_ref(saved_id)} in {args.db}")
@@ -233,6 +249,7 @@ def main(argv=None):
     a.add_argument("--out", default="out", help="output directory (default: out)")
     a.add_argument("--extract-model", default="claude-haiku-4-5", help="model for extraction")
     a.add_argument("--polish", action="store_true", help="LLM-polish the letter tone (needs API key)")
+    a.add_argument("--pdf", action="store_true", help="also write letter.pdf + report.pdf (needs reportlab)")
     a.add_argument("--save", action="store_true", help="save this audit as a tracked case")
     a.add_argument("--client", help="client/account this case belongs to (e.g. the forwarder)")
     a.add_argument("--db", default=DEFAULT_DB, help=f"case database path (default: {DEFAULT_DB})")

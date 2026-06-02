@@ -190,6 +190,8 @@ def _result_with_nav(report_dict, letter, saved_id=None, status=None, recovered=
         if recovered:
             tag += f" · recovered {recovered:,.2f}"
         bits.insert(0, f'<b>{tag}</b>')
+        bits.append(f'<a href="/cases/{saved_id}/letter.pdf" style="color:#1f5fb3;text-decoration:none">↓ Letter PDF</a>')
+        bits.append(f'<a href="/cases/{saved_id}/report.pdf" style="color:#1f5fb3;text-decoration:none">↓ Full report PDF</a>')
     inject = '<p style="margin:6px 0 0;display:flex;gap:16px;flex-wrap:wrap">' + "".join(
         f'<span>{b}</span>' for b in bits) + '</p>'
     return html.replace('</div>\n\n  <nav>', '</div>' + inject + '\n\n  <nav>', 1)
@@ -310,6 +312,38 @@ def create_app():
         report = json.loads(c["report_json"]) if c.get("report_json") else {}
         return _result_with_nav(report, c.get("letter_text") or "", case_id, status=c["status"],
                                 recovered=c.get("amount_recovered") or 0)
+
+    @app.get("/cases/{case_id}/letter.pdf")
+    def case_letter_pdf(case_id: int):
+        return _case_pdf(case_id, kind="letter")
+
+    @app.get("/cases/{case_id}/report.pdf")
+    def case_report_pdf(case_id: int):
+        return _case_pdf(case_id, kind="report")
+
+    def _case_pdf(case_id, kind):
+        from fastapi.responses import Response
+        from . import store
+        conn = store.connect(DB_PATH)
+        c = store.get_case(conn, case_id)
+        conn.close()
+        if not c:
+            return HTMLResponse(_error_page("No such case", f"Case {case_id} was not found."),
+                                status_code=404)
+        report = json.loads(c["report_json"]) if c.get("report_json") else {}
+        letter = c.get("letter_text") or ""
+        try:
+            from . import pdfout
+            data = (pdfout.letter_pdf_bytes(report, letter) if kind == "letter"
+                    else pdfout.report_pdf_bytes(report, letter))
+        except ImportError:
+            return HTMLResponse(_error_page(
+                "PDF export unavailable", "The PDF library (reportlab) is not installed.",
+                "Run: pip install reportlab"), status_code=500)
+        ref = "C-%04d" % case_id
+        fname = f"{ref}_{kind}.pdf"
+        return Response(data, media_type="application/pdf", headers={
+            "Content-Disposition": f'attachment; filename="{fname}"'})
 
     @app.get("/healthz", response_class=JSONResponse)
     def healthz():

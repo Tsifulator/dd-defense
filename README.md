@@ -107,12 +107,46 @@ Everything rule-related lives in `dd_defense/rules.py`:
 and **must be verified against the published regulation** before you rely on
 them. This is the starter ruleset — refine it with your authoritative checklist.
 
+## Case + savings tracker (proof of recovered $)
+
+Every audit can become a tracked **case** carried to resolution, recording what
+the carrier actually waived/credited — your proof of savings.
+
+```bash
+# audit + save as a case under a client account
+python -m dd_defense.cli audit --invoice inv.pdf --pdf --save --client "AcmeForwarding"
+python -m dd_defense.cli cases                       # portfolio rollup (total recovered, recovery rate)
+python -m dd_defense.cli cases --client AcmeForwarding
+python -m dd_defense.cli recover 1 2900 --note "carrier waived"   # close a case
+python -m dd_defense.cli export --client AcmeForwarding --out ledger.csv
+```
+
+In the web app: `/cases` dashboard (filter by client, export CSV) and per-case
+**PDF download** of the letter + full report.
+
+## Hardening (production-readiness)
+
+- **Auth** — optional password gate (`DD_APP_PASSWORD`); signed expiring session
+  cookie. App is open when unset (local dev), gated when set (deploy/share).
+- **Robust extraction** — magic-byte file validation, text-PDF + scanned-image
+  paths, transient-error retries with backoff, user-safe error messages.
+- **Rate limiting** — per-IP sliding window on the paid `/audit` endpoint
+  (`DD_RATE_LIMIT_MAX` / `DD_RATE_LIMIT_WINDOW`).
+- **Multi-client data** — `client` column, per-client dashboards + CSV, SQLite
+  WAL for concurrency, additive schema migrations.
+- **PDF export** — branded, forward-ready letter + report PDFs (`--pdf`, or the
+  web download links).
+
+Config (all optional, via `.env` — see `.env.example`): `DD_APP_PASSWORD`,
+`DD_SECRET_KEY`, `DD_COOKIE_SECURE`, `DD_DB_PATH`, `DD_RATE_LIMIT_MAX`,
+`DD_RATE_LIMIT_WINDOW`.
+
 ## Status / not yet built
 
-- Web app is **local-first and stateless**: no accounts, no database, no billing,
-  no saved history (each upload is processed then discarded). Those are the next
-  steps if/when demand is validated.
-- Not yet deployed. The app is deploy-ready (importable `dd_defense.webapp:app`),
-  but hosting (e.g. Railway, behind a password) hasn't been set up.
-- Single invoice at a time; no batch.
+- Not yet deployed. The app is deploy-ready (importable `dd_defense.webapp:app`,
+  auth + rate limiting in place); hosting on Railway behind a password is the
+  next step when you want to share a link.
+- Single invoice at a time; no batch upload yet.
+- Auth is a single shared password (one operator / small trusted team), not
+  multi-user identity. Per-user logins are a later step.
 - Substantive checks are only as good as the evidence supplied.
