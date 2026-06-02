@@ -273,14 +273,30 @@ def create_app():
         return _UPLOAD_PAGE
 
     @app.get("/cases", response_class=HTMLResponse)
-    def cases():
+    def cases(client: Optional[str] = None):
         from . import store
         conn = store.connect(DB_PATH)
-        rows = store.list_cases(conn)
-        stats = store.portfolio_stats(conn)
+        client = (client or "").strip() or None
+        rows = store.list_cases(conn, client=client)
+        stats = store.portfolio_stats(conn, client=client)
+        all_clients = store.clients(conn)
         conn.close()
         cur = rows[0]["currency"] if rows else "USD"
-        return render_dashboard(stats, rows, currency=cur)
+        return render_dashboard(stats, rows, currency=cur,
+                                clients=all_clients, active_client=client)
+
+    @app.get("/cases.csv")
+    def cases_csv(client: Optional[str] = None):
+        from fastapi.responses import PlainTextResponse
+        from . import store
+        conn = store.connect(DB_PATH)
+        client = (client or "").strip() or None
+        csv_text = store.export_csv(conn, client=client)
+        conn.close()
+        fname = f"dd_cases{'_' + client if client else ''}.csv"
+        return PlainTextResponse(csv_text, headers={
+            "Content-Disposition": f'attachment; filename="{fname}"'},
+            media_type="text/csv")
 
     @app.get("/cases/{case_id}", response_class=HTMLResponse)
     def case_detail(case_id: int):

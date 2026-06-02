@@ -244,9 +244,11 @@ _STATUS_PILL = {
 }
 
 
-def render_dashboard(stats, cases, currency="USD"):
+def render_dashboard(stats, cases, currency="USD", clients=None, active_client=None):
     """Render the portfolio savings dashboard from store.portfolio_stats() output
-    and a list of case rows (dicts). Pure function — no DB access here."""
+    and a list of case rows (dicts). Pure function — no DB access here.
+    `clients` is the list of all client names (for the filter); `active_client`
+    is the one currently filtered to (or None for all)."""
     def m(v):
         return _money(v, currency)
 
@@ -259,6 +261,7 @@ def render_dashboard(stats, cases, currency="USD"):
         rows.append(
             f'<tr>'
             f'<td><a href="/cases/{c["id"]}">{ref}</a></td>'
+            f'<td>{_esc(c.get("client") or "—")}</td>'
             f'<td><span class="pill" style="background:{color}">{_esc(c["status"])}</span></td>'
             f'<td>{_esc(c.get("invoice_number"))}</td>'
             f'<td>{_esc(c.get("carrier"))}</td>'
@@ -267,7 +270,17 @@ def render_dashboard(stats, cases, currency="USD"):
             f'<td class="num">{rec_html}</td>'
             f'</tr>'
         )
-    table = "".join(rows) or '<tr><td colspan="7" class="empty">No cases yet.</td></tr>'
+    table = "".join(rows) or '<tr><td colspan="8" class="empty">No cases yet.</td></tr>'
+
+    # client filter chips
+    clients = clients or []
+    chips = ['<a href="/cases" class="chip%s">All clients</a>' % ("" if not active_client else "")]
+    for cl in clients:
+        on = " on" if cl == active_client else ""
+        chips.append(f'<a href="/cases?client={_esc(cl)}" class="chip{on}">{_esc(cl)}</a>')
+    filter_html = ('<div class="chips">' + "".join(chips) + '</div>') if clients else ""
+    csv_q = f"?client={_esc(active_client)}" if active_client else ""
+    scope = f" — {_esc(active_client)}" if active_client else ""
 
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -278,12 +291,17 @@ th{{background:#f0f1f3;font-size:12px;text-transform:uppercase;letter-spacing:.4
 td.num,th.num{{text-align:right;font-variant-numeric:tabular-nums}}
 .pill{{color:#fff;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px}}
 td a{{color:#0f172a;font-weight:600;text-decoration:none}}td a:hover{{text-decoration:underline}}
+.chips{{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 0}}
+.chip{{font-size:13px;padding:4px 12px;border:1px solid var(--line);border-radius:999px;background:#fff;color:#0f172a;text-decoration:none}}
+.chip.on{{background:#0f172a;color:#fff;border-color:#0f172a}}
+.exp{{float:right;font-size:13px;color:#1f5fb3;text-decoration:none}}
 </style></head><body>
-<header><h1>D&amp;D Invoice Defense — Savings dashboard</h1>
+<header><h1>D&amp;D Invoice Defense — Savings dashboard{scope}</h1>
   <div class="meta">Tracked dispute cases and what carriers actually waived/credited.</div></header>
 <div class="wrap">
   <nav><a href="/">Upload</a><a href="/cases">Cases</a><a href="/demo">Demo</a>
    <a href="/logout" style="float:right;color:#888">Sign out</a></nav>
+  {filter_html}
   <div class="cards" style="grid-template-columns:repeat(3,1fr)">
     <div class="card" style="border-left:4px solid #1a7f37">
       <div class="lbl">Total recovered</div>
@@ -302,8 +320,9 @@ td a{{color:#0f172a;font-weight:600;text-decoration:none}}td a:hover{{text-decor
     <span>total flagged <b>{m(stats['total_flagged'])}</b></span>
     <span>est. fee @ {stats['fee_rate']*100:.0f}% <b>{m(stats['estimated_fee'])}</b></span>
   </div>
+  <h2 style="margin-bottom:0">Cases <a class="exp" href="/cases.csv{csv_q}">↓ Export CSV</a></h2>
   <table>
-    <thead><tr><th>Case</th><th>Status</th><th>Invoice</th><th>Carrier</th>
+    <thead><tr><th>Case</th><th>Client</th><th>Status</th><th>Invoice</th><th>Carrier</th>
       <th class="num">Billed</th><th class="num">Flagged</th><th class="num">Recovered</th></tr></thead>
     <tbody>{table}</tbody>
   </table>

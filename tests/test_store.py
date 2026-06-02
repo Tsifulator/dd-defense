@@ -108,6 +108,81 @@ class TestStore(unittest.TestCase):
     def test_case_ref_format(self):
         self.assertEqual(store.case_ref(7), "C-0007")
 
+    def test_client_scoping(self):
+        a1 = store.create_case(self.conn, sample_report("A-1", billed=1000, oblig=1000), client="AcmeFwd")
+        a2 = store.create_case(self.conn, sample_report("A-2", billed=500, oblig=500), client="AcmeFwd")
+        b1 = store.create_case(self.conn, sample_report("B-1", billed=2000, oblig=2000), client="BoltFwd")
+        store.set_recovered(self.conn, a1, 800.0)
+        store.set_recovered(self.conn, b1, 1500.0)
+        # list filtered by client
+        self.assertEqual(len(store.list_cases(self.conn, client="AcmeFwd")), 2)
+        self.assertEqual(len(store.list_cases(self.conn, client="BoltFwd")), 1)
+        # clients() lists both
+        self.assertEqual(set(store.clients(self.conn)), {"AcmeFwd", "BoltFwd"})
+        # portfolio scoped per client
+        acme = store.portfolio_stats(self.conn, client="AcmeFwd")
+        self.assertEqual(acme["total_recovered"], 800.0)
+        self.assertEqual(acme["total_cases"], 2)
+        bolt = store.portfolio_stats(self.conn, client="BoltFwd")
+        self.assertEqual(bolt["total_recovered"], 1500.0)
+
+    def test_set_client(self):
+        cid = store.create_case(self.conn, sample_report())
+        self.assertIsNone(store.get_case(self.conn, cid)["client"])
+        store.set_client(self.conn, cid, "NewFwd")
+        self.assertEqual(store.get_case(self.conn, cid)["client"], "NewFwd")
+
+    def test_export_csv(self):
+        store.create_case(self.conn, sample_report("INV-9", billed=1234), client="AcmeFwd")
+        csv_text = store.export_csv(self.conn)
+        self.assertIn("invoice_number", csv_text.splitlines()[0])  # header
+        self.assertIn("INV-9", csv_text)
+        self.assertIn("AcmeFwd", csv_text)
+        # client-scoped export excludes others
+        store.create_case(self.conn, sample_report("INV-OTHER"), client="BoltFwd")
+        acme_csv = store.export_csv(self.conn, client="AcmeFwd")
+        self.assertIn("INV-9", acme_csv)
+        self.assertNotIn("INV-OTHER", acme_csv)
+
+
+class TestMigration(unittest.TestCase):
+    def test_v1_db_gets_client_column(self):
+        """A pre-v2 DB (no 'client' column) should migrate on connect()."""
+        import sqlite3
+        import tempfile
+        path = tempfile.mktemp(suffix=".db")
+        try:
+            # build a minimal v1-style cases table WITHOUT the client column
+            raw = sqlite3.connect(path)
+            raw.execute("""CREATE TABLE cases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, updated_at TEXT,
+                invoice_number TEXT, carrier TEXT, importer TEXT, currency TEXT,
+                amount_billed REAL, amount_obligation_eliminated REAL, amount_disputable REAL,
+                amount_flagged REAL, amount_recovered REAL, status TEXT, sent_at TEXT,
+                resolved_at TEXT, notes TEXT, report_json TEXT, letter_text TEXT)""")
+            raw.execute("INSERT INTO cases (created_at,updated_at,invoice_number,status) "
+                        "VALUES ('t','t','OLD-1','drafted')")
+            raw.commit()
+            raw.close()
+            # connect() should run _migrate and add the column
+            conn = store.connect(path)
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(cases)").fetchall()}
+            self.assertIn("client", cols)
+            # existing row survives; client is NULL
+            row = store.get_case(conn, 1)
+            self.assertEqual(row["invoice_number"], "OLD-1")
+            self.assertIsNone(row["client"])
+            # and we can now set it
+            store.set_client(conn, 1, "MigratedFwd")
+            self.assertEqual(store.get_case(conn, 1)["client"], "MigratedFwd")
+            conn.close()
+        finally:
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.unlink(path + suffix)
+                except OSError:
+                    pass
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

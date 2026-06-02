@@ -26,7 +26,7 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 STATUSES = ("drafted", "sent", "responded", "resolved", "rejected", "withdrawn")
 OPEN_STATUSES = ("drafted", "sent", "responded")
@@ -54,11 +54,32 @@ def connect(db_path=DEFAULT_DB):
     if db_path != ":memory:":
         parent = os.path.dirname(os.path.abspath(db_path))
         os.makedirs(parent, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # WAL = readers don't block the writer and vice-versa; safer under concurrent
+    # web requests. Not available for in-memory DBs.
+    if db_path != ":memory:":
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 10000")
     init_db(conn)
+    _migrate(conn)
     return conn
+
+
+def _columns(conn, table):
+    return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _migrate(conn):
+    """Idempotent, additive migrations for DBs created by an older version."""
+    cols = _columns(conn, "cases")
+    if "client" not in cols:
+        conn.execute("ALTER TABLE cases ADD COLUMN client TEXT")
+    # safe now that the column is guaranteed to exist (fresh or migrated)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cases_client ON cases(client)")
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    conn.commit()
 
 
 def init_db(conn):
@@ -68,6 +89,7 @@ def init_db(conn):
             id                            INTEGER PRIMARY KEY AUTOINCREMENT,
             created_at                    TEXT NOT NULL,
             updated_at                    TEXT NOT NULL,
+            client                        TEXT,
             invoice_number                TEXT,
             carrier                       TEXT,
             importer                      TEXT,
@@ -123,9 +145,9 @@ def flagged_amount(report):
     return round(max(oblig, disp), 2)
 
 
-def create_case(conn, report, letter="", importer=None, status="drafted"):
+def create_case(conn, report, letter="", importer=None, status="drafted", client=None):
     """Persist an audit report as a new case. `report` is AuditReport.to_dict().
-    Returns the new case id."""
+    `client` is the account this work belongs to (e.g. the forwarder). Returns id."""
     if status not in STATUSES:
         raise ValueError(f"invalid status: {status}")
     now = _now()
@@ -133,11 +155,11 @@ def create_case(conn, report, letter="", importer=None, status="drafted"):
     flagged = flagged_amount(report)
     cur = conn.execute(
         """INSERT INTO cases
-           (created_at, updated_at, invoice_number, carrier, importer, currency,
+           (created_at, updated_at, client, invoice_number, carrier, importer, currency,
             amount_billed, amount_obligation_eliminated, amount_disputable,
             amount_flagged, amount_recovered, status, report_json, letter_text)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (now, now,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (now, now, client,
          report.get("invoice_number"), report.get("issuing_party"),
          importer or report.get("billed_party"), report.get("currency") or "USD",
          billed, report.get("amount_obligation_eliminated") or 0,
@@ -146,7 +168,7 @@ def create_case(conn, report, letter="", importer=None, status="drafted"):
     )
     case_id = cur.lastrowid
     _log(conn, case_id, "created",
-         f"billed={billed} flagged={flagged} status={status}")
+         f"client={client or '-'} billed={billed} flagged={flagged} status={status}")
     conn.commit()
     return case_id
 
@@ -163,17 +185,60 @@ def get_events(conn, case_id):
     return [dict(r) for r in rows]
 
 
-def list_cases(conn, status=None, limit=None):
+def list_cases(conn, status=None, client=None, limit=None):
     sql = "SELECT * FROM cases"
-    params = []
+    where, params = [], []
     if status:
-        sql += " WHERE status = ?"
+        where.append("status = ?")
         params.append(status)
+    if client:
+        where.append("client = ?")
+        params.append(client)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY id DESC"
     if limit:
         sql += " LIMIT ?"
         params.append(limit)
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def clients(conn):
+    """Distinct client names that have at least one case (excludes NULL)."""
+    rows = conn.execute(
+        "SELECT DISTINCT client FROM cases WHERE client IS NOT NULL AND client <> '' "
+        "ORDER BY client").fetchall()
+    return [r["client"] for r in rows]
+
+
+def set_client(conn, case_id, client):
+    if not get_case(conn, case_id):
+        raise KeyError(f"no such case: {case_id}")
+    conn.execute("UPDATE cases SET client = ?, updated_at = ? WHERE id = ?",
+                 (client, _now(), case_id))
+    _log(conn, case_id, "client_set", client or "")
+    conn.commit()
+
+
+_CSV_COLUMNS = (
+    "id", "created_at", "client", "invoice_number", "carrier", "importer",
+    "currency", "amount_billed", "amount_flagged", "amount_recovered",
+    "status", "sent_at", "resolved_at",
+)
+
+
+def export_csv(conn, client=None):
+    """Return all cases as a CSV string (optionally filtered to one client).
+    Excludes the large report_json/letter_text blobs — this is the savings ledger."""
+    import csv
+    import io
+    rows = list_cases(conn, client=client)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(_CSV_COLUMNS)
+    for c in reversed(rows):  # chronological in the export
+        w.writerow([c.get(col, "") for col in _CSV_COLUMNS])
+    return buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -236,10 +301,11 @@ def add_note(conn, case_id, note):
 # ---------------------------------------------------------------------------
 
 
-def portfolio_stats(conn, fee_rate=0.20):
-    """Aggregate the whole book into the figures that answer 'did we save money,
-    and what's my cut?'. fee_rate models a contingency fee on recovered $."""
-    rows = list_cases(conn)
+def portfolio_stats(conn, fee_rate=0.20, client=None):
+    """Aggregate the book into the figures that answer 'did we save money, and
+    what's my cut?'. fee_rate models a contingency fee on recovered $. Optionally
+    scoped to a single client."""
+    rows = list_cases(conn, client=client)
     by_status = {s: 0 for s in STATUSES}
     total_billed = total_flagged = total_recovered = 0.0
     flagged_on_resolved = 0.0

@@ -88,7 +88,8 @@ def cmd_audit(args):
     if getattr(args, "save", False):
         from . import store
         conn = store.connect(args.db)
-        saved_id = store.create_case(conn, report.to_dict(), letter=letter)
+        saved_id = store.create_case(conn, report.to_dict(), letter=letter,
+                                     client=getattr(args, "client", None))
         conn.close()
 
     # 5. console summary
@@ -120,11 +121,13 @@ def cmd_cases(args):
     """List tracked cases + a portfolio rollup."""
     from . import store
     conn = store.connect(args.db)
-    rows = store.list_cases(conn, status=args.status)
-    s = store.portfolio_stats(conn, fee_rate=args.fee_rate)
+    client = getattr(args, "client", None)
+    rows = store.list_cases(conn, status=args.status, client=client)
+    s = store.portfolio_stats(conn, fee_rate=args.fee_rate, client=client)
     conn.close()
     if not rows:
-        print(f"No cases yet in {args.db}. Run: audit --invoice ... --save")
+        scope = f" for client '{client}'" if client else ""
+        print(f"No cases yet{scope} in {args.db}. Run: audit --invoice ... --save")
         return 0
     print(f"\n{'CASE':8} {'STATUS':10} {'INVOICE':18} {'CARRIER':22} {'BILLED':>12} {'FLAGGED':>12} {'RECOVERED':>12}")
     print("-" * 98)
@@ -184,6 +187,21 @@ def cmd_status(args):
     return 0
 
 
+def cmd_export(args):
+    """Export the case ledger as CSV."""
+    from . import store
+    conn = store.connect(args.db)
+    csv_text = store.export_csv(conn, client=getattr(args, "client", None))
+    conn.close()
+    if args.out:
+        _write(args.out, csv_text)
+        n = csv_text.count("\n") - 1
+        print(f"wrote {max(n, 0)} case(s) -> {args.out}")
+    else:
+        sys.stdout.write(csv_text)
+    return 0
+
+
 def cmd_recover(args):
     """Record what the carrier actually waived/credited (closes the case)."""
     from . import store
@@ -216,14 +234,22 @@ def main(argv=None):
     a.add_argument("--extract-model", default="claude-haiku-4-5", help="model for extraction")
     a.add_argument("--polish", action="store_true", help="LLM-polish the letter tone (needs API key)")
     a.add_argument("--save", action="store_true", help="save this audit as a tracked case")
+    a.add_argument("--client", help="client/account this case belongs to (e.g. the forwarder)")
     a.add_argument("--db", default=DEFAULT_DB, help=f"case database path (default: {DEFAULT_DB})")
     a.set_defaults(func=cmd_audit)
 
     lc = sub.add_parser("cases", help="list tracked cases + portfolio savings rollup")
     lc.add_argument("--status", choices=_STATUSES)
+    lc.add_argument("--client", help="filter to one client/account")
     lc.add_argument("--fee-rate", type=float, default=0.20, help="contingency fee rate for the estimate (default 0.20)")
     lc.add_argument("--db", default=DEFAULT_DB)
     lc.set_defaults(func=cmd_cases)
+
+    ex = sub.add_parser("export", help="export the case ledger as CSV (to stdout or a file)")
+    ex.add_argument("--client", help="filter to one client/account")
+    ex.add_argument("--out", help="write CSV here (default: stdout)")
+    ex.add_argument("--db", default=DEFAULT_DB)
+    ex.set_defaults(func=cmd_export)
 
     sc = sub.add_parser("case", help="show one case in detail")
     sc.add_argument("id", type=int)
