@@ -35,3 +35,7 @@ samples/*.jpeg
 
 # --- Recovered prior-session bytecode (local only) ---
 .recover/
+
+# Excel/Word lock + temp files
+~$*
+.Rhistory
