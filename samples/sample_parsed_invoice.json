@@ -7,7 +7,7 @@
   "billed_party": "FreshHarvest Imports LLC",
   "currency": "USD",
   "bl_numbers": ["OLCBL1234567"],
-  "container_numbers": ["MSCU1234567", "MSCU7654321"],
+  "container_numbers": ["MSCU1234566", "MSCU7654329"],
   "port_of_discharge": {"value": "Port of Los Angeles", "present_on_invoice": true, "confidence": 0.4, "source_text": "faint/blurry header"},
   "charge_type": "demurrage",
   "free_time_allowed_days": 5,
@@ -19,7 +19,7 @@
   "stmt_fmc_consistent": "These charges are consistent with applicable FMC regulations.",
   "total_amount_due": 3600,
   "line_items": [
-    {"container_number": "MSCU1234567", "charge_type": "demurrage", "start_date": "2024-08-31", "end_date": "2024-09-09", "days_charged": 10, "rate_applied": 150, "line_total": 1500},
-    {"container_number": "MSCU7654321", "charge_type": "demurrage", "start_date": "2024-08-28", "end_date": "2024-09-10", "days_charged": 14, "rate_applied": 150, "line_total": 2250}
+    {"container_number": "MSCU1234566", "charge_type": "demurrage", "start_date": "2024-08-31", "end_date": "2024-09-09", "days_charged": 10, "rate_applied": 150, "line_total": 1500},
+    {"container_number": "MSCU7654329", "charge_type": "demurrage", "start_date": "2024-08-28", "end_date": "2024-09-10", "days_charged": 14, "rate_applied": 150, "line_total": 2250}
   ]
 }

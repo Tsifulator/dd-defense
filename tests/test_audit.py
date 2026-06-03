@@ -90,7 +90,7 @@ class TestSubstantiveWithEvidence(unittest.TestCase):
 
     def test_availability_gap_and_hold(self):
         self.assertEqual(self.f["INCENTIVE_NO_FAULT"].status, "fail")
-        # MSCU1234567: 08-31..09-04 = 5 days; MSCU7654321 hold 09-07..09-09 = 3 days -> 8 x 150
+        # MSCU1234566: 08-31..09-04 = 5 days; MSCU7654329 hold 09-07..09-09 = 3 days -> 8 x 150
         self.assertAlmostEqual(self.f["INCENTIVE_NO_FAULT"].amount_implicated, 8 * 150.0)
 
     def test_rate_overcharge(self):

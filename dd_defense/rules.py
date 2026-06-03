@@ -302,6 +302,56 @@ DUPLICATE_LINES = Rule(
 )
 
 
+def _check_container_numbers(inv, ev, ctx):
+    """Verify container numbers against the ISO 6346 check digit. A failure most
+    often means the EXTRACTOR misread a digit (not that the carrier erred), so this
+    is a 'review/verify' flag, not a dispute ground — it protects the importer from
+    citing a wrong container number in a letter."""
+    from .validators import validate_containers
+
+    codes = []
+    cf = getattr(inv, "container_numbers", None)
+    if cf and cf.has_value():
+        v = cf.value
+        codes.extend(v if isinstance(v, list) else [v])
+    for li in inv.line_items:
+        if li.container_number:
+            codes.append(li.container_number)
+    # de-dupe, preserve order
+    seen, uniq = set(), []
+    for c in codes:
+        k = str(c).strip().upper()
+        if k and k not in seen:
+            seen.add(k)
+            uniq.append(c)
+    if not uniq:
+        return CheckResult("not_applicable")
+
+    problems = validate_containers(uniq)
+    if not problems:
+        return CheckResult("pass")
+    parts = [f"{p['value']} — {p['reason']}" for p in problems]
+    return CheckResult("review", affected_containers=[p["value"] for p in problems],
+                       detail={"lines": "; ".join(parts), "count": len(problems)})
+
+
+CONTAINER_CHECK_DIGIT = Rule(
+    id="CONTAINER_CHECK_DIGIT",
+    title="Container numbers pass the ISO 6346 check digit",
+    citation="ISO 6346 (data integrity)",
+    layer="facial",
+    category="consistency",
+    severity="review",
+    dispute_ground=("{count} container number(s) fail the ISO 6346 check digit ({lines}). "
+                    "Verify the number(s) before relying on this invoice."),
+    review_ground=("{count} container number(s) fail the ISO 6346 check digit, which usually means a "
+                   "digit was misread during extraction: {lines}. Confirm the correct number against "
+                   "the original invoice before sending any dispute — citing a wrong container number "
+                   "will get the dispute rejected."),
+    check=_check_container_numbers,
+)
+
+
 # ---------------------------------------------------------------------------
 # Layer 2 — substantive (incentive principle); needs evidence
 # ---------------------------------------------------------------------------
@@ -547,6 +597,7 @@ RATE_VS_TARIFF = Rule(
 
 _EXPLICIT_RULES = [
     TIMING_30_DAY, MATH_LINE, MATH_TOTAL, CHARGE_DURING_FREE_TIME, DUPLICATE_LINES,
+    CONTAINER_CHECK_DIGIT,
     HOLIDAY_WEEKEND, CLOSURE, NO_APPOINTMENT, INCENTIVE_NO_FAULT, RATE_VS_TARIFF,
 ]
 
