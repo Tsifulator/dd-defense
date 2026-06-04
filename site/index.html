@@ -268,8 +268,7 @@ footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px}
       <h2>Get a free audit of last month's invoices</h2>
       <p>Send us a batch of recent D&amp;D invoices. We'll show you exactly what's disputable — at no cost, no commitment. If there's nothing there, you've lost nothing.</p>
       <div class="formwrap">
-        <!-- Wire `action` to Formspree/your inbox before going live. -->
-        <form action="https://formspree.io/f/REPLACE_ME" method="POST">
+        <form id="pilotForm">
           <div class="field">
             <label for="name">Name</label>
             <input id="name" name="name" required placeholder="Your name">
@@ -287,7 +286,7 @@ footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px}
             <textarea id="msg" name="message" placeholder="e.g. ~80 import containers/month, mostly through LA/LB"></textarea>
           </div>
           <button class="btn" type="submit" style="width:100%">Request my free audit</button>
-          <p class="note">We'll reply to arrange sending the invoices securely. We don't share your data.</p>
+          <p class="note" id="formNote">We'll reply to arrange sending the invoices securely. We don't share your data.</p>
         </form>
       </div>
     </div>
@@ -307,6 +306,59 @@ footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px}
 
 <script>
   document.getElementById('yr').textContent = new Date().getFullYear();
+
+  /* ─────────────────────────────────────────────────────────────────
+     LEAD FORM CONFIG — set ONE of these, then the form works.
+     Option A (recommended): make a free form at https://formspree.io,
+       paste its ID here (looks like "xayzqwer"). Submissions email you.
+     Option B (zero signup): leave FORMSPREE_ID empty and set YOUR_EMAIL.
+       The form opens the visitor's email client with the details prefilled.
+     If neither is set, the form shows a friendly "email us at…" message.
+     ───────────────────────────────────────────────────────────────── */
+  const FORMSPREE_ID = "";                    // e.g. "xayzqwer"
+  const YOUR_EMAIL   = "you@dnddefense.com";  // <- change to your real inbox
+
+  const form = document.getElementById('pilotForm');
+  const note = document.getElementById('formNote');
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const data = {
+      name: form.name.value.trim(),
+      company: form.company.value.trim(),
+      email: form.email.value.trim(),
+      message: form.msg.value.trim(),
+    };
+    const btn = form.querySelector('button[type=submit]');
+
+    // Option A — Formspree (real async submit, no page reload)
+    if (FORMSPREE_ID) {
+      btn.disabled = true; btn.textContent = "Sending…";
+      try {
+        const r = await fetch("https://formspree.io/f/" + FORMSPREE_ID, {
+          method: "POST", headers: { "Accept": "application/json" }, body: new FormData(form),
+        });
+        if (r.ok) { form.style.display = "none"; note.innerHTML =
+          "<strong>Thanks, " + escapeHtml(data.name || "") + "!</strong> We'll be in touch shortly to arrange the invoices."; }
+        else throw new Error("submit failed");
+      } catch (_) {
+        btn.disabled = false; btn.textContent = "Request my free audit";
+        note.textContent = "Something went wrong — please email us at " + YOUR_EMAIL;
+      }
+      return;
+    }
+
+    // Option B — mailto fallback (works with zero backend)
+    const subj = encodeURIComponent("Free D&D audit request — " + (data.company || data.name));
+    const body = encodeURIComponent(
+      "Name: " + data.name + "\nCompany: " + data.company + "\nEmail: " + data.email +
+      "\nMonthly invoices: " + (data.message || "(not specified)") +
+      "\n\n(Sent from dnddefense.com)");
+    window.location.href = "mailto:" + YOUR_EMAIL + "?subject=" + subj + "&body=" + body;
+    note.innerHTML = "Opening your email app… if nothing happens, email us at <strong>" + YOUR_EMAIL + "</strong>.";
+  });
+
+  function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 </script>
 </body>
 </html>

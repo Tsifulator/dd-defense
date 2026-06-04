@@ -13,13 +13,18 @@ python3 -m http.server 8900   # then open http://127.0.0.1:8900/
 
 ## Before going live (two small edits)
 
-1. **Wire the form.** The pilot form posts to a placeholder. Create a free
-   [Formspree](https://formspree.io) form (or similar) and replace
-   `https://formspree.io/f/REPLACE_ME` in `index.html` with your endpoint, so
-   submissions land in your inbox. (Until then, the form won't deliver.)
+1. **Wire the form** — near the bottom of `index.html` there's a `LEAD FORM CONFIG`
+   block with two variables. Pick one:
+   - **Easiest / zero signup:** set `YOUR_EMAIL` to your real inbox. Submitting the
+     form opens the visitor's email app with all the details prefilled.
+   - **Recommended:** make a free form at [formspree.io](https://formspree.io),
+     paste its ID into `FORMSPREE_ID`. Submissions are emailed to you automatically
+     (no page reload, shows a thank-you message).
+   Until you set one, the form still works via the email fallback — just change
+   `YOUR_EMAIL` from the placeholder.
 2. **Double-check the legal disclaimer** wording with counsel — it's drafted to
    keep the "software, not legal advice / we don't file" boundary clear, but your
-   dad should bless it.
+   dad should bless it (see `docs/legal-review-packet.docx`).
 
 ## Deploy (pick one — all free, all take ~5 min)
 
