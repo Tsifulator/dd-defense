@@ -133,6 +133,57 @@ def _money(v, c):
     return f"{c} {v:,.2f}" if v is not None else "n/a"
 
 
+def cmd_batch(args):
+    """Audit every invoice in a folder, save each as a case, print a triage summary."""
+    from . import batch
+
+    if not os.path.isdir(args.folder):
+        print(f"error: not a folder: {args.folder}", file=sys.stderr)
+        return 2
+    files = batch.find_invoices(args.folder)
+    if not files:
+        print(f"No invoices (.pdf/.png/.jpg) found in {args.folder}")
+        return 0
+    evidence = _load_evidence(args.evidence)
+
+    print(f"\nProcessing {len(files)} invoice(s) from {args.folder} ...\n")
+
+    def progress(i, n, r):
+        mark = "ok " if r["ok"] else "ERR"
+        tag = {"auto_clear": "auto-clear  ", "needs_review": "NEEDS REVIEW"}.get(r["decision"], r["decision"])
+        ref = (store_case_ref(r["case_id"]) if r["case_id"] else "—")
+        amt = f"{r['currency']} {r['amount_flagged']:,.0f}" if r["amount_flagged"] else "—"
+        print(f"  [{i:>3}/{n}] {mark} {tag}  {ref:8} {amt:>14}  {r['file']}")
+        if r["reasons"]:
+            print(f"            ↳ {'; '.join(r['reasons'])}")
+        if r["error"]:
+            print(f"            ↳ error: {r['error']}")
+
+    results, s = batch.process_folder(
+        args.folder, evidence=evidence, db_path=args.db, client=args.client,
+        extract_model=args.extract_model, out_dir=(args.out or None),
+        save=not args.no_save, on_progress=progress)
+
+    cur = s["currency"]
+    print("\n" + "=" * 66)
+    print(f"  BATCH SUMMARY — {s['processed']}/{s['total_files']} processed"
+          + (f", {s['failed']} failed" if s["failed"] else ""))
+    print(f"  auto-clear:   {s['auto_clear']:>4}   (clean — fast-track your review)")
+    print(f"  needs review: {s['needs_review']:>4}   (look at these first)")
+    print(f"  total flagged disputable: {cur} {s['total_flagged']:,.2f}")
+    print(f"  total billed across batch: {cur} {s['total_billed']:,.2f}")
+    print("=" * 66)
+    print("  Review the flagged cases:  python -m dd_defense.cli cases"
+          + (f" --client \"{args.client}\"" if args.client else ""))
+    print()
+    return 0
+
+
+def store_case_ref(cid):
+    from .store import case_ref
+    return case_ref(cid)
+
+
 def cmd_cases(args):
     """List tracked cases + a portfolio rollup."""
     from . import store
@@ -254,6 +305,16 @@ def main(argv=None):
     a.add_argument("--client", help="client/account this case belongs to (e.g. the forwarder)")
     a.add_argument("--db", default=DEFAULT_DB, help=f"case database path (default: {DEFAULT_DB})")
     a.set_defaults(func=cmd_audit)
+
+    b = sub.add_parser("batch", help="audit every invoice in a folder (triage + save as cases)")
+    b.add_argument("folder", help="folder containing invoice PDFs/images")
+    b.add_argument("--client", help="client/account these invoices belong to")
+    b.add_argument("--evidence", help="optional evidence JSON applied to all invoices in the batch")
+    b.add_argument("--out", help="optional dir to also write per-invoice report.json + letter.md")
+    b.add_argument("--db", default=DEFAULT_DB, help=f"case database path (default: {DEFAULT_DB})")
+    b.add_argument("--extract-model", default="claude-haiku-4-5", help="model for extraction")
+    b.add_argument("--no-save", action="store_true", help="don't save cases (dry run)")
+    b.set_defaults(func=cmd_batch)
 
     lc = sub.add_parser("cases", help="list tracked cases + portfolio savings rollup")
     lc.add_argument("--status", choices=_STATUSES)
