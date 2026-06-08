@@ -315,8 +315,8 @@ footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px}
        The form opens the visitor's email client with the details prefilled.
      If neither is set, the form shows a friendly "email us at…" message.
      ───────────────────────────────────────────────────────────────── */
-  const FORMSPREE_ID = "";                    // e.g. "xayzqwer"
-  const YOUR_EMAIL   = "you@dnddefense.com";  // <- change to your real inbox
+  const FORMSPREE_ID = "";                    // optional: paste a Formspree id to auto-email leads
+  const YOUR_EMAIL   = "tsiflik@bc.edu";      // leads land here (mailto fallback) until Formspree is set
 
   const form = document.getElementById('pilotForm');
   const note = document.getElementById('formNote');
