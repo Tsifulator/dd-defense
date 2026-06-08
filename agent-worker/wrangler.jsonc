@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dnd-agent",
+  "main": "src/index.js",
+  "compatibility_date": "2025-09-24",
+  // Runs every Monday at 14:00 UTC (~9–10am US East). Adjust as you like:
+  //   "0 14 * * 1"  = weekly Monday   |  "0 14 * * *" = daily  |  https://crontab.guru
+  "triggers": {
+    "crons": ["0 14 * * 1"]
+  },
+  // Non-secret config. The Airtable TOKEN is a secret — set it separately with:
+  //   npx wrangler secret put AIRTABLE_API_KEY
+  "vars": {
+    "AIRTABLE_BASE_ID": "appSMyhfk2MbaTjhL",
+    "PROSPECTS_TABLE": "Prospects"
+    // "NOTIFY_WEBHOOK": "https://hooks.slack.com/...”   // optional digest
+  }
+}
