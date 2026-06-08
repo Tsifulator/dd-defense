@@ -285,8 +285,68 @@ def cmd_recover(args):
     return 0
 
 
+def cmd_airtable_setup(args):
+    """Create the Airtable base schema (Prospects/Leads/Cases)."""
+    from . import airtable_setup
+    try:
+        airtable_setup.setup()
+    except RuntimeError as ex:
+        print(f"error: {ex}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_airtable_ping(args):
+    """Verify Airtable connectivity (lists 1 record)."""
+    from . import airtable
+    try:
+        airtable.ping()
+    except airtable.AirtableError as ex:
+        print(f"Airtable NOT reachable: {ex}", file=sys.stderr)
+        return 1
+    print("Airtable reachable ✓ (base + key OK)")
+    return 0
+
+
+def cmd_outreach(args):
+    """Draft + queue prospects from a CSV into the Airtable Prospects table."""
+    from . import outreach
+    try:
+        prospects = outreach.load_prospects_csv(args.csv)
+    except FileNotFoundError:
+        print(f"error: no such CSV: {args.csv}", file=sys.stderr)
+        return 1
+    if not prospects:
+        print("No prospects found in the CSV.")
+        return 0
+    print(f"Drafting + queuing {len(prospects)} prospect(s) (status: Needs Approval)...")
+    try:
+        recs = outreach.queue_prospects(
+            prospects, sender_name=args.sender_name, sender_phone=args.sender_phone,
+            use_llm=args.polish)
+    except Exception as ex:
+        print(f"error: {ex}", file=sys.stderr)
+        return 1
+    print(f"Queued {len(recs)} draft(s) to Airtable. Review + send them from the Prospects table.")
+    return 0
+
+
+def cmd_airtable_sync(args):
+    """Push the local case/savings tracker into the Airtable Cases table."""
+    from . import airtable_sync
+    def prog(ref, created):
+        print(f"  {'+' if created else '~'} {ref}")
+    try:
+        s = airtable_sync.sync(db_path=args.db, on_progress=prog)
+    except Exception as ex:
+        print(f"error: {ex}", file=sys.stderr)
+        return 1
+    print(f"\nSynced {s['total']} case(s) -> Airtable (created {s['created']}, updated {s['updated']}).")
+    return 0
+
+
 def main(argv=None):
-    _load_dotenv()  # pick up ANTHROPIC_API_KEY from a local .env if present
+    _load_dotenv()  # pick up ANTHROPIC_API_KEY (+ AIRTABLE_*) from a local .env if present
     from .store import DEFAULT_DB
     _STATUSES = ("drafted", "sent", "responded", "resolved", "rejected", "withdrawn")
     p = argparse.ArgumentParser(prog="dd_defense", description="Audit D&D invoices and track dispute outcomes.")
@@ -347,6 +407,24 @@ def main(argv=None):
     rec.add_argument("--note", default="")
     rec.add_argument("--db", default=DEFAULT_DB)
     rec.set_defaults(func=cmd_recover)
+
+    # ── Airtable operations base ────────────────────────────────────────────
+    asetup = sub.add_parser("airtable-setup", help="create the Airtable base schema (Prospects/Leads/Cases)")
+    asetup.set_defaults(func=cmd_airtable_setup)
+
+    aping = sub.add_parser("airtable-ping", help="check Airtable connectivity (key + base)")
+    aping.set_defaults(func=cmd_airtable_ping)
+
+    out = sub.add_parser("outreach", help="draft + queue prospects from a CSV into Airtable (draft-only, no send)")
+    out.add_argument("csv", help="CSV of prospects (company,type,contact_name,title,email,phone,url,location,containers_per_mo,source,notes)")
+    out.add_argument("--sender-name", default="[Your name]", help="your name for the email signature")
+    out.add_argument("--sender-phone", default="[phone]", help="your phone for the signature")
+    out.add_argument("--polish", action="store_true", help="LLM-personalize each draft (needs ANTHROPIC_API_KEY)")
+    out.set_defaults(func=cmd_outreach)
+
+    async_ = sub.add_parser("airtable-sync", help="push the local case/savings tracker into Airtable")
+    async_.add_argument("--db", default=DEFAULT_DB)
+    async_.set_defaults(func=cmd_airtable_sync)
 
     args = p.parse_args(argv)
     return args.func(args)

@@ -308,18 +308,34 @@ footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px}
   document.getElementById('yr').textContent = new Date().getFullYear();
 
   /* ─────────────────────────────────────────────────────────────────
-     LEAD FORM CONFIG — set ONE of these, then the form works.
-     Option A (recommended): make a free form at https://formspree.io,
-       paste its ID here (looks like "xayzqwer"). Submissions email you.
-     Option B (zero signup): leave FORMSPREE_ID empty and set YOUR_EMAIL.
-       The form opens the visitor's email client with the details prefilled.
-     If neither is set, the form shows a friendly "email us at…" message.
+     LEAD FORM — submit order:
+       1. POST /api/lead  → writes the lead into Airtable (Cloudflare Pages
+          Function; needs AIRTABLE_API_KEY + AIRTABLE_BASE_ID set in Pages env).
+       2. If that isn't configured / fails → fall back to emailing YOUR_EMAIL
+          (mailto opens the visitor's mail app with details prefilled).
+     So it works the moment the page is live, and upgrades to Airtable intake
+     automatically once the env vars are set — no code change needed.
      ───────────────────────────────────────────────────────────────── */
-  const FORMSPREE_ID = "";                    // optional: paste a Formspree id to auto-email leads
-  const YOUR_EMAIL   = "tsiflik@bc.edu";      // leads land here (mailto fallback) until Formspree is set
+  const YOUR_EMAIL = "tsiflik@bc.edu";   // fallback inbox until Airtable intake is configured
 
   const form = document.getElementById('pilotForm');
   const note = document.getElementById('formNote');
+
+  function thankYou(name) {
+    form.style.display = "none";
+    note.innerHTML = "<strong>Thanks, " + escapeHtml(name || "") +
+      "!</strong> We'll be in touch shortly to arrange the invoices.";
+  }
+  function emailFallback(data) {
+    const subj = encodeURIComponent("Free D&D audit request — " + (data.company || data.name));
+    const body = encodeURIComponent(
+      "Name: " + data.name + "\nCompany: " + data.company + "\nEmail: " + data.email +
+      "\nMonthly invoices: " + (data.message || "(not specified)") +
+      "\n\n(Sent from dnddefense.com)");
+    window.location.href = "mailto:" + YOUR_EMAIL + "?subject=" + subj + "&body=" + body;
+    note.innerHTML = "Opening your email app… if nothing happens, email us at <strong>" +
+      YOUR_EMAIL + "</strong>.";
+  }
 
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
@@ -330,32 +346,22 @@ footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px}
       message: form.msg.value.trim(),
     };
     const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = "Sending…";
 
-    // Option A — Formspree (real async submit, no page reload)
-    if (FORMSPREE_ID) {
-      btn.disabled = true; btn.textContent = "Sending…";
-      try {
-        const r = await fetch("https://formspree.io/f/" + FORMSPREE_ID, {
-          method: "POST", headers: { "Accept": "application/json" }, body: new FormData(form),
-        });
-        if (r.ok) { form.style.display = "none"; note.innerHTML =
-          "<strong>Thanks, " + escapeHtml(data.name || "") + "!</strong> We'll be in touch shortly to arrange the invoices."; }
-        else throw new Error("submit failed");
-      } catch (_) {
-        btn.disabled = false; btn.textContent = "Request my free audit";
-        note.textContent = "Something went wrong — please email us at " + YOUR_EMAIL;
-      }
-      return;
+    try {
+      const r = await fetch("/api/lead", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (r.ok) { thankYou(data.name); return; }
+      // 503 = intake not configured yet → graceful email fallback
+      btn.disabled = false; btn.textContent = "Request my free audit";
+      emailFallback(data);
+    } catch (_) {
+      btn.disabled = false; btn.textContent = "Request my free audit";
+      emailFallback(data);
     }
-
-    // Option B — mailto fallback (works with zero backend)
-    const subj = encodeURIComponent("Free D&D audit request — " + (data.company || data.name));
-    const body = encodeURIComponent(
-      "Name: " + data.name + "\nCompany: " + data.company + "\nEmail: " + data.email +
-      "\nMonthly invoices: " + (data.message || "(not specified)") +
-      "\n\n(Sent from dnddefense.com)");
-    window.location.href = "mailto:" + YOUR_EMAIL + "?subject=" + subj + "&body=" + body;
-    note.innerHTML = "Opening your email app… if nothing happens, email us at <strong>" + YOUR_EMAIL + "</strong>.";
   });
 
   function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}

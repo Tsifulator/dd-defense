@@ -1,0 +1,4 @@
+company,type,contact_name,title,email,phone,url,location,containers_per_mo,source,notes
+Harbor Freight Forwarding,Forwarder,Maria Lopez,Operations Manager,mlopez@example.com,+1-310-555-0101,linkedin.com/in/example,Los Angeles / Long Beach,120,LinkedIn,Perishables — lots of reefer
+FreshPort Imports,Importer,,,info@example.com,,freshport.example.com,Newark,60,Referral,Produce importer; find ops contact
+Aegean Customs Brokers,Broker,Dmitri Pappas,Owner,dmitri@example.com,,linkedin.com/in/example2,Savannah,40,Port directory,Handles seafood + produce
