@@ -144,18 +144,41 @@ def prospect_to_fields(p, draft, status="Needs Approval"):
     }
 
 
+def _norm_company(name):
+    """Normalize a company name for dedupe: lowercase, collapse whitespace, drop
+    trailing punctuation. So 'Harbor FF' and 'harbor ff ' match."""
+    return " ".join(str(name or "").lower().split()).strip(" .,")
+
+
+def existing_company_keys(api_key=None, base_id=None):
+    """Set of normalized company names already in the Airtable Prospects table."""
+    recs = airtable.list_records(airtable.TABLE_PROSPECTS, api_key=api_key, base_id=base_id)
+    return {_norm_company(r.get("fields", {}).get("Company")) for r in recs}
+
+
 def queue_prospects(prospects, sender_name="[Your name]", sender_phone="[phone]",
-                    use_llm=False, api_key=None, base_id=None, status="Needs Approval"):
-    """Draft + write each prospect to the Airtable Prospects queue. Returns the
-    list of created Airtable records. Does NOT send any email."""
-    field_dicts = []
+                    use_llm=False, api_key=None, base_id=None, status="Needs Approval",
+                    dedupe=True):
+    """Draft + write each prospect to the Airtable Prospects queue. Returns a dict
+    {created: [records], skipped: [company names]}. Does NOT send any email.
+
+    With dedupe=True (default), prospects whose Company already exists in the table
+    are skipped — so this is safe to re-run or schedule without creating duplicates."""
+    seen = existing_company_keys(api_key=api_key, base_id=base_id) if dedupe else set()
+    field_dicts, skipped = [], []
     for p in prospects:
+        key = _norm_company(p.get("company"))
+        if dedupe and key and key in seen:
+            skipped.append(p.get("company"))
+            continue
+        seen.add(key)  # also dedupe within this batch
         draft = draft_email(p, sender_name=sender_name, sender_phone=sender_phone)
         if use_llm:
             draft = polish_with_llm(draft, p, api_key=api_key)
         field_dicts.append(prospect_to_fields(p, draft, status=status))
-    return airtable.create_records(
-        airtable.TABLE_PROSPECTS, field_dicts, api_key=api_key, base_id=base_id)
+    created = airtable.create_records(
+        airtable.TABLE_PROSPECTS, field_dicts, api_key=api_key, base_id=base_id) if field_dicts else []
+    return {"created": created, "skipped": skipped}
 
 
 def load_prospects_csv(path):

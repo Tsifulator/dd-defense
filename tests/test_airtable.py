@@ -96,6 +96,18 @@ class TestProspectFields(unittest.TestCase):
         self.assertEqual(f["Type"], "Other")
 
 
+class TestDedupe(unittest.TestCase):
+    def test_norm_company(self):
+        self.assertEqual(outreach._norm_company("Harbor FF"), "harbor ff")
+        self.assertEqual(outreach._norm_company("  Harbor   FF .. "), "harbor ff")
+        # these should collide (same normalized key)
+        self.assertEqual(outreach._norm_company("Seafrigo America"),
+                         outreach._norm_company("seafrigo  america "))
+
+    def test_norm_handles_none(self):
+        self.assertEqual(outreach._norm_company(None), "")
+
+
 class TestCaseSync(unittest.TestCase):
     def test_case_to_fields(self):
         from dd_defense import airtable_sync

@@ -321,13 +321,21 @@ def cmd_outreach(args):
         return 0
     print(f"Drafting + queuing {len(prospects)} prospect(s) (status: Needs Approval)...")
     try:
-        recs = outreach.queue_prospects(
+        result = outreach.queue_prospects(
             prospects, sender_name=args.sender_name, sender_phone=args.sender_phone,
-            use_llm=args.polish)
+            use_llm=args.polish, dedupe=not args.allow_duplicates)
     except Exception as ex:
         print(f"error: {ex}", file=sys.stderr)
         return 1
-    print(f"Queued {len(recs)} draft(s) to Airtable. Review + send them from the Prospects table.")
+    n_created, n_skipped = len(result["created"]), len(result["skipped"])
+    print(f"Queued {n_created} new draft(s) to Airtable.", end="")
+    if n_skipped:
+        print(f" Skipped {n_skipped} already in the queue: {', '.join(result['skipped'][:6])}"
+              + ("…" if n_skipped > 6 else "") + ".")
+    else:
+        print()
+    if n_created:
+        print("Review + send them from the Prospects table.")
     return 0
 
 
@@ -420,6 +428,7 @@ def main(argv=None):
     out.add_argument("--sender-name", default="[Your name]", help="your name for the email signature")
     out.add_argument("--sender-phone", default="[phone]", help="your phone for the signature")
     out.add_argument("--polish", action="store_true", help="LLM-personalize each draft (needs ANTHROPIC_API_KEY)")
+    out.add_argument("--allow-duplicates", action="store_true", help="don't skip companies already in the queue")
     out.set_defaults(func=cmd_outreach)
 
     async_ = sub.add_parser("airtable-sync", help="push the local case/savings tracker into Airtable")
