@@ -353,8 +353,81 @@ def cmd_airtable_sync(args):
     return 0
 
 
+def cmd_ingest(args):
+    """Autonomous intake: pull invoices from the email inbox or a folder, audit
+    each, save as a case, optionally push to Airtable."""
+    from . import pipeline
+
+    evidence = _load_evidence(args.evidence)
+    if getattr(args, "enrich", False) and evidence is None:
+        from . import evidence_sources
+        evidence = evidence_sources.build_evidence(data_dir=args.evidence_dir)
+        print(f"Evidence enrichment on (from {args.evidence_dir}).")
+    meta_by_path = {}
+    if args.source == "inbox":
+        try:
+            paths, meta_by_path = pipeline.source_inbox(
+                save_dir=args.save_dir, unseen_only=not args.all,
+                mark_seen=not args.no_mark, limit=args.limit)
+        except RuntimeError as ex:
+            print(f"error: {ex}", file=sys.stderr)
+            return 1
+        print(f"Inbox: {len(paths)} invoice attachment(s) found.")
+    else:  # folder
+        if not args.folder or not os.path.isdir(args.folder):
+            print("error: --folder <dir> required for source=folder", file=sys.stderr)
+            return 2
+        paths = pipeline.source_folder(args.folder)
+        print(f"Folder: {len(paths)} invoice file(s).")
+
+    if not paths:
+        print("Nothing to ingest.")
+        return 0
+
+    def prog(r):
+        if r.get("skipped"):
+            print(f"  · skipped {r['file']} (already processed)")
+        elif not r.get("ok"):
+            print(f"  ✗ {r['file']}: {r.get('error', 'failed')}")
+        else:
+            from .store import case_ref
+            tag = {"auto_clear": "auto-clear", "needs_review": "NEEDS REVIEW"}.get(r["decision"], r["decision"])
+            amt = f"{r['currency']} {r['amount_flagged']:,.0f}" if r["amount_flagged"] else "—"
+            print(f"  ✓ {case_ref(r['case_id'])} {tag:12} {amt:>12}  {r['file']}")
+            if r.get("reasons"):
+                print(f"      ↳ {'; '.join(r['reasons'])}")
+
+    out = pipeline.process_paths(
+        paths, db_path=args.db, client=args.client, evidence=evidence,
+        push_airtable=args.airtable, extract_model=args.extract_model,
+        on_progress=prog, meta_by_path=meta_by_path)
+    s = out["summary"]
+    print("\n" + "=" * 60)
+    print(f"  INGEST: {s['processed']} audited, {s['skipped']} skipped, {s['failed']} failed")
+    print(f"  auto-clear {s['auto_clear']} · needs-review {s['needs_review']}")
+    print(f"  total flagged disputable: {s['total_flagged']:,.2f}")
+    if s["airtable_pushed"] is not None:
+        print(f"  pushed to Airtable: {s['airtable_pushed']} case(s)")
+    print("=" * 60)
+    return 0
+
+
+def cmd_evidence_scaffold(args):
+    """Create the evidence_data/ folder with editable example files."""
+    from . import evidence_sources
+    written = evidence_sources.scaffold(data_dir=args.dir)
+    if written:
+        print(f"Created {len(written)} example evidence file(s) in {args.dir}:")
+        for p in written:
+            print(f"  {p}")
+        print("Edit these with real closure/tariff data, then run: ingest ... --enrich")
+    else:
+        print(f"Evidence files already exist in {args.dir} (left untouched).")
+    return 0
+
+
 def main(argv=None):
-    _load_dotenv()  # pick up ANTHROPIC_API_KEY (+ AIRTABLE_*) from a local .env if present
+    _load_dotenv()  # pick up ANTHROPIC_API_KEY (+ AIRTABLE_* / DD_IMAP_*) from .env
     from .store import DEFAULT_DB
     _STATUSES = ("drafted", "sent", "responded", "resolved", "rejected", "withdrawn")
     p = argparse.ArgumentParser(prog="dd_defense", description="Audit D&D invoices and track dispute outcomes.")
@@ -434,6 +507,26 @@ def main(argv=None):
     async_ = sub.add_parser("airtable-sync", help="push the local case/savings tracker into Airtable")
     async_.add_argument("--db", default=DEFAULT_DB)
     async_.set_defaults(func=cmd_airtable_sync)
+
+    ing = sub.add_parser("ingest", help="autonomous intake: audit invoices from the inbox or a folder -> Airtable")
+    ing.add_argument("source", choices=("inbox", "folder"), help="where invoices come from")
+    ing.add_argument("--folder", help="folder of invoices (for source=folder)")
+    ing.add_argument("--client", help="tag all cases with this client (else inferred from sender domain)")
+    ing.add_argument("--evidence", help="optional evidence JSON applied to all invoices")
+    ing.add_argument("--enrich", action="store_true", help="auto-build evidence (holidays + local closures/tariffs) for substantive grounds")
+    ing.add_argument("--evidence-dir", default="evidence_data", help="folder of operator evidence files (for --enrich)")
+    ing.add_argument("--airtable", action="store_true", help="also push the resulting cases to Airtable")
+    ing.add_argument("--save-dir", default="inbox_attachments", help="where to save inbox attachments")
+    ing.add_argument("--all", action="store_true", help="inbox: process all emails, not just unseen")
+    ing.add_argument("--no-mark", action="store_true", help="inbox: don't mark emails as seen")
+    ing.add_argument("--limit", type=int, help="inbox: cap number of emails processed")
+    ing.add_argument("--db", default=DEFAULT_DB)
+    ing.add_argument("--extract-model", default="claude-haiku-4-5")
+    ing.set_defaults(func=cmd_ingest)
+
+    evs = sub.add_parser("evidence-scaffold", help="create editable evidence files (closures/tariffs) for --enrich")
+    evs.add_argument("--dir", default="evidence_data")
+    evs.set_defaults(func=cmd_evidence_scaffold)
 
     args = p.parse_args(argv)
     return args.func(args)

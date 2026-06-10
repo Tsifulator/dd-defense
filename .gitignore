@@ -39,3 +39,9 @@ samples/*.jpeg
 # Excel/Word lock + temp files
 ~$*
 .Rhistory
+
+# Autonomous intake (private — invoices + processed ledger)
+inbox_attachments/
+processed.json
+evidence_data/
+ingest.log
