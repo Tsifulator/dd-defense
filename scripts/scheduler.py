@@ -163,3 +163,20 @@ def run_daily():
 
 if __name__ == "__main__":
     run_daily()
+
+    # Send confirmation
+    try:
+        import requests
+        key = os.getenv("RESEND_API_KEY")
+        if key:
+            requests.post("https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "from": os.getenv("FROM_EMAIL", "nick@kuroshiotrade.com"),
+                    "to": [os.getenv("OPERATOR_EMAIL", "tsiflik@bc.edu")],
+                    "subject": f"[D&D Defense] Daily prospects — {date.today()}",
+                    "text": f"D&D Defense prospect pipeline finished for {date.today()}.\nCheck Airtable for new prospects to review.",
+                })
+            logger.info("Confirmation email sent")
+    except Exception as e:
+        logger.warning(f"Notification failed: {e}")
