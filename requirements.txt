@@ -20,6 +20,9 @@ reportlab>=4.0         # not needed to run audits; only to create test invoices
 APScheduler>=3.10
 python-dotenv>=1.0
 
+# -- Postgres / Supabase case store (only when DD_DATABASE_URL points at Postgres) --
+psycopg[binary]>=3.1   # store.py uses this lazily; SQLite path needs nothing
+
 # -- Airtable operations base (outreach / leads / case sync) --
 # NOTHING required — the Airtable client (dd_defense/airtable.py) is stdlib-only
 # (urllib). Just set AIRTABLE_API_KEY + AIRTABLE_BASE_ID in .env. See AIRTABLE_SETUP.md.

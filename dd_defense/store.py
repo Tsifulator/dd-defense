@@ -1,23 +1,20 @@
-r"""Case + savings tracker (SQLite, stdlib only).
+r"""Case + savings tracker.
+
+DUAL-BACKEND DRAFT (port target): SQLite (default — used by the test-suite via
+:memory: and for local files) and PostgreSQL (Supabase, selected only when a
+Postgres DSN is given explicitly or via DD_DATABASE_URL). The SQLite path is
+byte-for-byte the original behaviour, so the existing tests are unaffected; the
+Postgres support is additive.
 
 Every audit can be saved as a CASE and tracked to resolution. This is what makes
 the value provable: it records what the carrier was billed, what the tool flagged
 as disputable, and — crucially — what the carrier actually waived/credited
-(`amount_recovered`). The portfolio view rolls those up into "total $ recovered",
-which is the number you show prospects and (optionally) bill a percentage of.
-
-Case lifecycle:
-    drafted  -> sent -> responded -> resolved        (normal path)
-                                  \-> rejected         (carrier refused; recovered = 0)
-                                   \-> withdrawn        (importer dropped it)
+(`amount_recovered`).
 
 The three money columns:
     amount_billed    what the carrier charged (invoice total)
-    amount_flagged   what the tool says is in play (full invoice if a facial
-                     defect eliminates the obligation, else the disputable lines)
-    amount_recovered what the carrier ACTUALLY waived/credited — the truth, set
-                     by you when the dispute resolves, from the carrier's
-                     waiver / credit memo / corrected invoice.
+    amount_flagged   what the tool says is in play
+    amount_recovered what the carrier ACTUALLY waived/credited
 """
 from __future__ import annotations
 
@@ -45,12 +42,152 @@ def case_ref(case_id):
 
 
 # ---------------------------------------------------------------------------
+# Postgres support (additive). store.py is written with sqlite '?' placeholders;
+# the wrapper below translates them and adapts the small slice of the
+# sqlite3.Connection API the rest of this module relies on.
+# ---------------------------------------------------------------------------
+
+_PG_PREFIXES = ("postgres://", "postgresql://")
+
+
+def _pg_dsn(db_path):
+    """Decide whether this connect() should use Postgres; return the DSN if so.
+
+    - An explicit Postgres DSN passed as db_path always wins.
+    - ':memory:' is the test sentinel and is never routed to Postgres.
+    - Otherwise, if DD_DATABASE_URL is set the app uses Postgres for ALL
+      connections — so the many connect(<path>) call sites need no edits. We use
+      the app-specific name (not the generic DATABASE_URL) so a stray DATABASE_URL
+      in someone's shell can't silently hijack the database.
+    """
+    if isinstance(db_path, str) and db_path.startswith(_PG_PREFIXES):
+        return db_path
+    if db_path == ":memory:":
+        return None
+    env = os.environ.get("DD_DATABASE_URL")
+    if env and env.startswith(_PG_PREFIXES):
+        return env
+    return None
+
+
+class _PgResult:
+    """Stand-in for a sqlite3 cursor: fetchone/fetchall + .lastrowid (filled from
+    INSERT ... RETURNING id)."""
+    __slots__ = ("_cur", "lastrowid")
+
+    def __init__(self, cur, lastrowid=None):
+        self._cur = cur
+        self.lastrowid = lastrowid
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+
+class _PgConn:
+    """Adapts a psycopg connection to the subset of sqlite3.Connection store.py
+    uses: execute('... ? ...'), commit/rollback/close, dict-like rows, and the
+    INSERT->lastrowid idiom (via RETURNING id)."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        q = sql.replace("?", "%s")
+        stripped = sql.lstrip().lower()
+        cur = self._conn.cursor()
+        if stripped.startswith("insert") and "returning" not in stripped:
+            cur.execute(q.rstrip().rstrip(";") + " RETURNING id", params)
+            row = cur.fetchone()
+            return _PgResult(cur, lastrowid=(row["id"] if row else None))
+        cur.execute(q, params)
+        return _PgResult(cur)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+    # mirror sqlite3's context-manager semantics (commit on success, rollback on
+    # error; does NOT close) in case any caller uses `with connect() as conn:`
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        return False
+
+    # row_factory assignment is a no-op for PG (rows are already dict-like)
+    @property
+    def row_factory(self):
+        return None
+
+    @row_factory.setter
+    def row_factory(self, value):
+        pass
+
+
+_PG_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS cases (
+        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, client TEXT,
+        invoice_number TEXT, carrier TEXT, importer TEXT,
+        currency TEXT DEFAULT 'USD',
+        amount_billed DOUBLE PRECISION DEFAULT 0,
+        amount_obligation_eliminated DOUBLE PRECISION DEFAULT 0,
+        amount_disputable DOUBLE PRECISION DEFAULT 0,
+        amount_flagged DOUBLE PRECISION DEFAULT 0,
+        amount_recovered DOUBLE PRECISION DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'drafted',
+        sent_at TEXT, resolved_at TEXT, notes TEXT DEFAULT '',
+        report_json TEXT, letter_text TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS case_events (
+        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        case_id BIGINT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+        at TEXT NOT NULL, event TEXT NOT NULL, detail TEXT DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status)",
+    "CREATE INDEX IF NOT EXISTS idx_cases_client ON cases(client)",
+    "CREATE INDEX IF NOT EXISTS idx_events_case ON case_events(case_id)",
+)
+
+
+def _connect_pg(dsn):
+    import psycopg
+    from psycopg.rows import dict_row
+
+    conn = psycopg.connect(dsn, connect_timeout=15, row_factory=dict_row)
+    wrapped = _PgConn(conn)
+    for stmt in _PG_SCHEMA:
+        wrapped.execute(stmt)
+    wrapped.commit()
+    return wrapped
+
+
+# ---------------------------------------------------------------------------
 # connection / schema
 # ---------------------------------------------------------------------------
 
 
 def connect(db_path=DEFAULT_DB):
-    """Open (creating parent dirs + schema if needed) and return a connection."""
+    """Open (creating parent dirs + schema if needed) and return a connection.
+    Routes to Postgres when db_path is a DSN (or DD_DATABASE_URL is set and
+    db_path is the default); otherwise the original SQLite behaviour."""
+    dsn = _pg_dsn(db_path)
+    if dsn:
+        return _connect_pg(dsn)
+
+    # ---- SQLite path (unchanged from the original) ----
     if db_path != ":memory:":
         parent = os.path.dirname(os.path.abspath(db_path))
         os.makedirs(parent, exist_ok=True)
@@ -72,7 +209,8 @@ def _columns(conn, table):
 
 
 def _migrate(conn):
-    """Idempotent, additive migrations for DBs created by an older version."""
+    """Idempotent, additive migrations for DBs created by an older version.
+    SQLite only — the Postgres schema is created complete in _connect_pg."""
     cols = _columns(conn, "cases")
     if "client" not in cols:
         conn.execute("ALTER TABLE cases ADD COLUMN client TEXT")
@@ -303,8 +441,7 @@ def add_note(conn, case_id, note):
 
 def portfolio_stats(conn, fee_rate=0.20, client=None):
     """Aggregate the book into the figures that answer 'did we save money, and
-    what's my cut?'. fee_rate models a contingency fee on recovered $. Optionally
-    scoped to a single client."""
+    what's my cut?'. fee_rate models a contingency fee on recovered $."""
     rows = list_cases(conn, client=client)
     by_status = {s: 0 for s in STATUSES}
     total_billed = total_flagged = total_recovered = 0.0
