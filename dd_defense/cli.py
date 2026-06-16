@@ -443,6 +443,22 @@ def cmd_prospect_status(args):
     return 0
 
 
+def cmd_send_outreach(args):
+    """Send outreach emails to Approved prospects via Resend."""
+    from .airtable.send import send_approved
+    try:
+        send_approved(
+            limit=args.limit,
+            dry_run=args.dry_run,
+            from_addr=args.sender,
+            reply_to=args.reply_to,
+        )
+    except RuntimeError as ex:
+        print(f"error: {ex}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_prospect_export(args):
     """Export prospects to a CSV for review (sorted by Fit Score)."""
     import csv as csvmod
@@ -634,6 +650,13 @@ def main(argv=None):
     ing.add_argument("--db", default=DEFAULT_DB)
     ing.add_argument("--extract-model", default="claude-haiku-4-5")
     ing.set_defaults(func=cmd_ingest)
+
+    so = sub.add_parser("send-outreach", help="send outreach emails to Approved prospects via Resend")
+    so.add_argument("--limit", type=int, default=10, help="max emails to send per run (default 10)")
+    so.add_argument("--dry-run", action="store_true", help="preview without sending")
+    so.add_argument("--sender", default="tsiflik@bc.edu", help="from address")
+    so.add_argument("--reply-to", default="tsiflik@bc.edu", help="reply-to address")
+    so.set_defaults(func=cmd_send_outreach)
 
     ps = sub.add_parser("prospect-status", help="show outreach pipeline: prospect counts by status")
     ps.set_defaults(func=cmd_prospect_status)

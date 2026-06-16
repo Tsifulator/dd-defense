@@ -1,0 +1,28 @@
+name: Send Approved Outreach
+
+on:
+  schedule:
+    - cron: '*/30 7-20 * * *'  # Every 30 min, 07:00-20:00 UTC (10am-11pm Athens)
+  workflow_dispatch: {}         # manual trigger from GitHub UI
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Send approved prospects via Gmail SMTP
+        env:
+          AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+          AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python -c "
+          import sys; sys.path.insert(0, '.');
+          from dd_defense.airtable.send import send_approved;
+          send_approved(limit=5, pace=3.0)
+          "
