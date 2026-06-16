@@ -21,8 +21,4 @@ jobs:
           AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-        run: python -c "
-          import sys; sys.path.insert(0, '.');
-          from dd_defense.airtable.send import send_approved;
-          send_approved(limit=5, pace=3.0)
-          "
+        run: python -c "import sys; sys.path.insert(0, '.'); from dd_defense.airtable.send import send_approved; send_approved(limit=5, pace=3.0)"
