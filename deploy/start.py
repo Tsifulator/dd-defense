@@ -25,7 +25,7 @@ def start_scheduler():
         logger.warning("APScheduler not installed — daily pipeline disabled")
         return
 
-    from scripts.scheduler import run_daily
+    from deploy.scheduler import run_daily
 
     sched = BackgroundScheduler(timezone="UTC")
     sched.add_job(

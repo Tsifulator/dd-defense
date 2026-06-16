@@ -287,7 +287,7 @@ def cmd_recover(args):
 
 def cmd_airtable_setup(args):
     """Create the Airtable base schema (Prospects/Leads/Cases)."""
-    from . import airtable_setup
+    from .airtable import setup as airtable_setup
     try:
         airtable_setup.setup()
     except RuntimeError as ex:
@@ -298,7 +298,7 @@ def cmd_airtable_setup(args):
 
 def cmd_airtable_ping(args):
     """Verify Airtable connectivity (lists 1 record)."""
-    from . import airtable
+    from .airtable import client as airtable
     try:
         airtable.ping()
     except airtable.AirtableError as ex:
@@ -341,7 +341,7 @@ def cmd_outreach(args):
 
 def cmd_airtable_sync(args):
     """Push the local case/savings tracker into the Airtable Cases table."""
-    from . import airtable_sync
+    from .airtable import sync as airtable_sync
     def prog(ref, created):
         print(f"  {'+' if created else '~'} {ref}")
     try:
@@ -409,6 +409,117 @@ def cmd_ingest(args):
     if s["airtable_pushed"] is not None:
         print(f"  pushed to Airtable: {s['airtable_pushed']} case(s)")
     print("=" * 60)
+    return 0
+
+
+def cmd_prospect_status(args):
+    """Show outreach pipeline: prospect counts by status."""
+    from .airtable import client as airtable
+    try:
+        records = airtable.list_records(airtable.TABLE_PROSPECTS)
+    except airtable.AirtableError as ex:
+        print(f"error: {ex}", file=sys.stderr)
+        return 1
+    if not records:
+        print("No prospects in Airtable.")
+        return 0
+    counts = {}
+    for rec in records:
+        status = rec.get("fields", {}).get("Status", "(no status)")
+        counts[status] = counts.get(status, 0) + 1
+    # Sort: Needs Approval first, then by count
+    ordered = sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+    print(f"\nOutreach pipeline — {len(records)} prospects:\n")
+    for status, n in ordered:
+        bar = "█" * min(n, 40)
+        print(f"  {status:18} {n:>4}  {bar}")
+    print()
+    # Quick stats
+    with_email = sum(1 for r in records if r.get("fields", {}).get("Email"))
+    with_name = sum(1 for r in records if r.get("fields", {}).get("Contact Name"))
+    print(f"  with email:   {with_email}/{len(records)}")
+    print(f"  with name:    {with_name}/{len(records)}")
+    print()
+    return 0
+
+
+def cmd_prospect_export(args):
+    """Export prospects to a CSV for review (sorted by Fit Score)."""
+    import csv as csvmod
+    from .airtable import client as airtable
+    try:
+        records = airtable.list_records(airtable.TABLE_PROSPECTS)
+    except airtable.AirtableError as ex:
+        print(f"error: {ex}", file=sys.stderr)
+        return 1
+    fields_order = ["Company", "Type", "Contact Name", "Title", "Email", "Phone",
+                    "Location / Port", "Est. Containers/mo", "Fit Score", "Source",
+                    "Status", "LinkedIn / URL", "Draft Subject", "Notes"]
+    out = args.out
+    with open(out, "w", newline="", encoding="utf-8-sig") as fh:
+        w = csvmod.DictWriter(fh, fieldnames=fields_order + ["Proceed?", "Your Notes"])
+        w.writeheader()
+        for rec in sorted(records, key=lambda r: -(r.get("fields", {}).get("Fit Score") or 0)):
+            f = rec.get("fields", {})
+            row = {k: f.get(k, "") for k in fields_order}
+            row["Proceed?"] = ""
+            row["Your Notes"] = ""
+            w.writerow(row)
+    print(f"Exported {len(records)} prospects -> {out}")
+    print("Open in Excel, mark 'Proceed?' column Y/N, then run: prospect-approve <csv>")
+    return 0
+
+
+def cmd_prospect_approve(args):
+    """Read back a reviewed CSV and update Airtable statuses based on Proceed? column."""
+    import csv as csvmod
+    from .airtable import client as airtable
+    try:
+        with open(args.csv, newline="", encoding="utf-8-sig") as fh:
+            rows = list(csvmod.DictReader(fh))
+    except FileNotFoundError:
+        print(f"error: no such file: {args.csv}", file=sys.stderr)
+        return 1
+    # Build a lookup of company -> proceed decision
+    decisions = {}
+    for row in rows:
+        company = (row.get("Company") or "").strip()
+        proceed = (row.get("Proceed?") or "").strip().upper()
+        if company and proceed:
+            decisions[company] = proceed
+    if not decisions:
+        print("No decisions found. Mark the 'Proceed?' column with Y or N and re-save.")
+        return 0
+    # Fetch current prospects and match by company name
+    records = airtable.list_records(airtable.TABLE_PROSPECTS)
+    approved = skipped = unchanged = 0
+    for rec in records:
+        f = rec.get("fields", {})
+        company = f.get("Company", "")
+        decision = decisions.get(company)
+        if not decision:
+            unchanged += 1
+            continue
+        if decision in ("Y", "YES", "1", "GO"):
+            new_status = "Approved"
+            approved += 1
+        elif decision in ("N", "NO", "0", "SKIP", "X"):
+            new_status = "Not a Fit"
+            skipped += 1
+        else:
+            unchanged += 1
+            continue
+        if f.get("Status") != new_status:
+            airtable.update_record(airtable.TABLE_PROSPECTS, rec["id"], {"Status": new_status})
+            print(f"  {'✓' if new_status == 'Approved' else '✗'} {company} -> {new_status}")
+    print(f"\nDone. approved={approved} not-a-fit={skipped} unchanged={unchanged}")
+    return 0
+
+
+def cmd_prospect_cleanup(args):
+    """Fix placeholder brackets + fake phones in prospect drafts."""
+    from .airtable.cleanup import run
+    run(dry_run=args.dry_run)
     return 0
 
 
@@ -523,6 +634,22 @@ def main(argv=None):
     ing.add_argument("--db", default=DEFAULT_DB)
     ing.add_argument("--extract-model", default="claude-haiku-4-5")
     ing.set_defaults(func=cmd_ingest)
+
+    ps = sub.add_parser("prospect-status", help="show outreach pipeline: prospect counts by status")
+    ps.set_defaults(func=cmd_prospect_status)
+
+    pe = sub.add_parser("prospect-export", help="export prospects to CSV for review in Excel")
+    pe.add_argument("--out", default=os.path.expanduser("~/workspace/exports/dnd-prospects.csv"),
+                    help="output CSV path")
+    pe.set_defaults(func=cmd_prospect_export)
+
+    pa = sub.add_parser("prospect-approve", help="read back a reviewed CSV and approve/reject prospects")
+    pa.add_argument("csv", help="path to your reviewed CSV with Proceed? column filled in")
+    pa.set_defaults(func=cmd_prospect_approve)
+
+    pc = sub.add_parser("prospect-cleanup", help="fix placeholder brackets + fake phones in prospect drafts")
+    pc.add_argument("--dry-run", action="store_true", help="show what would change without patching Airtable")
+    pc.set_defaults(func=cmd_prospect_cleanup)
 
     evs = sub.add_parser("evidence-scaffold", help="create editable evidence files (closures/tariffs) for --enrich")
     evs.add_argument("--dir", default="evidence_data")

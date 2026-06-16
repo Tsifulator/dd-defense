@@ -149,12 +149,11 @@ def run_daily():
 
     # Step 3: Sync cases (if any local cases exist)
     try:
-        from dd_defense.store import CaseStore
         db_path = os.getenv("DD_DB_PATH", "data/cases.db")
         if Path(db_path).exists():
-            from dd_defense.airtable_sync import sync_cases
-            synced = sync_cases(db_path)
-            logger.info(f"Synced {synced} cases to Airtable")
+            from dd_defense.airtable.sync import sync
+            result = sync(db_path=db_path)
+            logger.info(f"Synced {result['total']} cases to Airtable")
     except Exception as e:
         logger.warning(f"Case sync skipped: {e}")
 

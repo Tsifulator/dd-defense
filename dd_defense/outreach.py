@@ -20,13 +20,13 @@ from __future__ import annotations
 
 import os
 
-from . import airtable
+from .airtable import client as airtable
 
 # ---------------------------------------------------------------------------
 # qualify
 # ---------------------------------------------------------------------------
 
-_TYPE_WEIGHT = {"forwarder": 30, "broker": 20, "importer": 10, "other": 0}
+_TYPE_WEIGHT = {"forwarder": 30, "broker": 20, "drayage": 25, "importer": 10, "other": 0}
 
 
 def fit_score(p):
@@ -56,29 +56,124 @@ def _first_name(p):
     return "there"
 
 
+def _detect_segment(p):
+    """Detect vertical segment from type + notes for hook selection."""
+    notes = str(p.get("notes") or "").lower()
+    ptype = str(p.get("type", "")).strip().lower()
+    if ptype == "drayage":
+        return "drayage"
+    if ptype == "broker":
+        return "broker"
+    kw = notes + " " + str(p.get("company") or "").lower()
+    if any(w in kw for w in ("seafood", "fish", "shrimp", "lobster", "protein", "meat")):
+        return "seafood"
+    if any(w in kw for w in ("produce", "perishab", "fresh", "fruit", "vegetab", "reefer")):
+        return "perishable"
+    if any(w in kw for w in ("pharma", "biotech", "cold chain", "medical", "vaccine", "life science")):
+        return "pharma"
+    if any(w in kw for w in ("amazon", "fba", "ecomm", "e-comm", "dtc", "shopify")):
+        return "ecomm"
+    if ptype == "forwarder":
+        return "forwarder"
+    if ptype == "importer":
+        return "importer"
+    return "general"
+
+
+# Segment-specific hooks and subjects
+_SEGMENT_HOOKS = {
+    "perishable": {
+        "subject": "your reefer D&D invoices — there's $ sitting on the table",
+        "hook": ("Perishable importers get hit hardest by D&D fees — a stuck reefer container "
+                 "racks up $200–$400/day, and carriers know you can't wait around to dispute it. "
+                 "But since the FMC's 2024 rule, a lot of those charges are technically invalid — "
+                 "missing required fields, billed late, or accrued during terminal closures."),
+        "ask": (f"Can I audit a batch of {{company}}'s recent D&D invoices for free? If the "
+                f"charges are clean, you've lost nothing. If they're not, I'll show you exactly "
+                f"what to dispute and draft the letter."),
+    },
+    "seafood": {
+        "subject": "your seafood D&D charges — most are disputable (free audit)",
+        "hook": ("Seafood importers pay some of the steepest demurrage & detention in the game — "
+                 "reefer surcharges, port congestion, customs holds on SIMP paperwork. Since the "
+                 "FMC's 2024 rule, a huge chunk of those invoices are technically disputable: "
+                 "missing required info, billed late, or fees that ran during closures."),
+        "ask": (f"Can I run {{company}}'s last month of D&D invoices through our tool for free "
+                f"and show you what's contestable? No cost, no strings — if there's nothing "
+                f"there, you know your carriers are billing clean."),
+    },
+    "pharma": {
+        "subject": "pharma D&D invoices — the FMC rule makes most disputable",
+        "hook": ("Pharma and cold-chain shipments attract premium D&D rates, and carriers know "
+                 "you'll pay to avoid disrupting a validated supply chain. But since the FMC's "
+                 "2024 rule, invoices missing required data elements or billed more than 30 days "
+                 "late can have the obligation to pay eliminated entirely."),
+        "ask": (f"Can I audit {{company}}'s recent D&D invoices for free? The tool checks every "
+                f"line against the FMC rule and drafts the dispute letter — you just review and "
+                f"send. No cost, no commitment."),
+    },
+    "drayage": {
+        "subject": "your per diem & chassis D&D — there's money back on the table",
+        "hook": ("Drayage carriers eat D&D costs that aren't even their fault — terminal "
+                 "closures, no appointments, chassis shortages. Since the FMC's 2024 rule, "
+                 "carriers have to include specific data on every invoice, and a missing field "
+                 "or a late bill can void the charge entirely. Most truckers pay anyway because "
+                 "checking each invoice is a pain."),
+        "ask": (f"Can I run {{company}}'s recent D&D and per diem invoices through our tool for "
+                f"free? I'll flag everything that's disputable under the rule and draft the "
+                f"letters — you just review and send."),
+    },
+    "ecomm": {
+        "subject": "your container D&D fees — most FBA importers overpay",
+        "hook": ("High-volume importers get nickeled and dimed on D&D — $150–$300/container/day "
+                 "adds up fast across dozens of containers. Since the FMC's 2024 rule, a lot of "
+                 "those charges are technically invalid: missing required fields, billed late, or "
+                 "fees that accrued during port congestion you couldn't control."),
+        "ask": (f"Can I audit {{company}}'s last month of D&D invoices for free? At your volume, "
+                f"even a 20% dispute rate means real money back. No cost, no commitment."),
+    },
+    "broker": {
+        "subject": "free D&D audit tool for your import clients",
+        "hook": ("Since the FMC's 2024 rule, a lot of the demurrage & detention invoices your "
+                 "clients receive are technically disputable — missing required fields, billed "
+                 "late, math errors. You're already the trusted advisor on customs — adding D&D "
+                 "dispute support is a natural value-add."),
+        "ask": (f"Can I run a sample batch of {{company}}'s client D&D invoices for free and "
+                f"show you what's contestable? If there's money there, it's a service you can "
+                f"offer your importers at zero effort."),
+    },
+    "forwarder": {
+        "subject": "found $ in your clients' D&D invoices (free check)",
+        "hook": ("Since the FMC's 2024 rule, a lot of the demurrage & detention invoices your "
+                 "clients get are technically disputable — missing required fields, billed late, "
+                 "math errors. Most get paid anyway because checking each one by hand is tedious."),
+        "ask": (f"Can I run a batch of {{company}}'s recent D&D invoices for free and show you "
+                f"what's contestable? No cost, no commitment — and it's one account across all "
+                f"your importers' containers."),
+    },
+    "importer": {
+        "subject": "found $ in your carrier D&D invoices (free check)",
+        "hook": ("Since the FMC's 2024 rule, a lot of demurrage & detention invoices are "
+                 "technically disputable — missing required info, billed late, or simple math "
+                 "errors. Most importers pay them anyway because checking each one by hand is a pain."),
+        "ask": (f"Can I audit last month's D&D invoices for {{company}} for free and show you "
+                f"what's contestable? No cost, no commitment — if there's nothing there, you've "
+                f"lost nothing."),
+    },
+}
+
+
 def draft_email(p, sender_name="[Your name]", sender_phone="[phone]"):
-    """Return {subject, body}. Personalized by company/type. Templated — no LLM
-    needed (so it runs free + offline). `polish_with_llm` can refine later."""
+    """Return {subject, body}. Personalized by company/type/segment. Templated —
+    no LLM needed (so it runs free + offline). `polish_with_llm` can refine later."""
     company = (p.get("company") or "your company").strip()
     fn = _first_name(p)
-    ptype = str(p.get("type", "")).strip().lower()
+    segment = _detect_segment(p)
+    s = _SEGMENT_HOOKS.get(segment, _SEGMENT_HOOKS["importer"])
 
-    subject = "found $ in your carrier D&D invoices (free check)"
-
-    if ptype == "importer":
-        hook = ("Since the FMC's 2024 rule, a lot of demurrage & detention invoices are "
-                "technically disputable — missing required info, billed late, or simple math "
-                "errors. Most importers pay them anyway because checking each one by hand is a pain.")
-        ask = (f"Can I audit last month's D&D invoices for {company} for free and show you "
-               f"what's contestable? No cost, no commitment — if there's nothing there, you've "
-               f"lost nothing.")
-    else:  # forwarder / broker / other
-        hook = ("Since the FMC's 2024 rule, a lot of the demurrage & detention invoices your "
-                "clients get are technically disputable — missing required fields, billed late, "
-                "math errors. Most get paid anyway because checking each one by hand is tedious.")
-        ask = (f"Can I run a batch of {company}'s recent D&D invoices for free and show you "
-               f"what's contestable? No cost, no commitment — and it's one account across all "
-               f"your importers' containers.")
+    subject = s["subject"]
+    hook = s["hook"]
+    ask = s["ask"].format(company=company)
 
     body = (
         f"Hi {fn},\n\n"
@@ -124,7 +219,7 @@ def polish_with_llm(draft, prospect, model="claude-haiku-4-5", api_key=None):
 def prospect_to_fields(p, draft, status="Needs Approval"):
     """Map a prospect + its draft into Airtable Prospects fields."""
     type_map = {"forwarder": "Forwarder", "broker": "Broker",
-                "importer": "Importer", "other": "Other"}
+                "drayage": "Drayage", "importer": "Importer", "other": "Other"}
     return {
         "Company": p.get("company"),
         "Type": type_map.get(str(p.get("type", "")).strip().lower(), "Other"),

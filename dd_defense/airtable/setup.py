@@ -34,7 +34,7 @@ _SINGLE_SELECT = lambda name, choices: {
 SCHEMA = {
     "Prospects": [
         {"name": "Company", "type": "singleLineText"},
-        _SINGLE_SELECT("Type", ["Forwarder", "Importer", "Broker", "Other"]),
+        _SINGLE_SELECT("Type", ["Forwarder", "Importer", "Broker", "Drayage", "Other"]),
         {"name": "Contact Name", "type": "singleLineText"},
         {"name": "Title", "type": "singleLineText"},
         {"name": "Email", "type": "email"},

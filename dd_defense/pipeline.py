@@ -149,7 +149,7 @@ def process_paths(paths, db_path=None, client=None, evidence=None, push_airtable
     pushed = 0
     if push_airtable:
         try:
-            from . import airtable_sync
+            from .airtable import sync as airtable_sync
             s = airtable_sync.sync(db_path=db_path)
             pushed = s["created"] + s["updated"]
         except Exception as ex:

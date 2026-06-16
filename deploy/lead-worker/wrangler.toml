@@ -1,0 +1,10 @@
+name = "dnd-lead"
+main = "worker.js"
+compatibility_date = "2025-09-24"
+
+[vars]
+AIRTABLE_BASE_ID = "appSMyhfk2MbaTjhL"
+
+[[routes]]
+pattern = "dnddefense.com/api/*"
+zone_name = "dnddefense.com"

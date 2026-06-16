@@ -6,7 +6,8 @@ existing rows instead of duplicating. Lets the savings dashboard live in Airtabl
 """
 from __future__ import annotations
 
-from . import airtable, store
+from . import client as airtable
+from dd_defense import store
 
 
 def case_to_fields(case):

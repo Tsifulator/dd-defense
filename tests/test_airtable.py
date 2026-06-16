@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dd_defense import airtable, outreach
+from dd_defense import airtable, outreach  # airtable re-exports from airtable.client
 
 
 class TestAirtableShaping(unittest.TestCase):
@@ -110,7 +110,7 @@ class TestDedupe(unittest.TestCase):
 
 class TestCaseSync(unittest.TestCase):
     def test_case_to_fields(self):
-        from dd_defense import airtable_sync
+        from dd_defense.airtable import sync as airtable_sync
         case = {"id": 7, "invoice_number": "INV-1", "carrier": "OceanLink",
                 "client": "Acme", "amount_billed": 3600, "amount_flagged": 3600,
                 "amount_recovered": 2900, "status": "resolved"}
@@ -122,13 +122,13 @@ class TestCaseSync(unittest.TestCase):
 
 class TestSetupSchema(unittest.TestCase):
     def test_schema_has_three_tables_with_primaries(self):
-        from dd_defense import airtable_setup as s
+        from dd_defense.airtable import setup as s
         self.assertEqual(set(s.SCHEMA), {"Prospects", "Leads", "Cases"})
         for t in s.SCHEMA:
             self.assertIn(t, s._PRIMARY)
 
     def test_prospects_status_includes_needs_approval(self):
-        from dd_defense import airtable_setup as s
+        from dd_defense.airtable import setup as s
         status = [f for f in s.SCHEMA["Prospects"] if f["name"] == "Status"][0]
         choices = [c["name"] for c in status["options"]["choices"]]
         self.assertIn("Needs Approval", choices)

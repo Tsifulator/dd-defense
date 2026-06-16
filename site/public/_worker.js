@@ -1,23 +1,32 @@
-// Cloudflare Pages Function: POST /api/lead
-// Receives the landing-page "free audit" form and writes the lead into Airtable.
-// The Airtable token lives as a server-side env var (NEVER in the browser).
-//
-// Set these in Cloudflare Pages > Settings > Environment variables (Production):
-//   AIRTABLE_API_KEY   personal access token (scope: data.records:write on the base)
-//   AIRTABLE_BASE_ID   appXXXXXXXXXXXXXX
-//   AIRTABLE_LEADS_TABLE   (optional) defaults to "Leads"
-//
-// The form posts JSON {name, company, email, message}. We respond with JSON so the
-// page can show a thank-you without leaving.
+// Pages Advanced Mode: _worker.js handles /api/lead, passes everything else to static assets.
 
-export async function onRequestPost(context) {
-  const { request, env } = context;
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
 
+    // Only intercept /api/lead — everything else falls through to static assets
+    if (url.pathname === "/api/lead") {
+      return handleLead(request, env);
+    }
+
+    // Pass through to static assets (Pages serves index.html etc.)
+    return env.ASSETS.fetch(request);
+  },
+};
+
+async function handleLead(request, env) {
   const json = (obj, status = 200) =>
     new Response(JSON.stringify(obj), {
       status,
       headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
     });
+
+  if (request.method === "GET") {
+    return new Response("POST a lead here.", { status: 405 });
+  }
+  if (request.method !== "POST") {
+    return json({ ok: false, error: "method not allowed" }, 405);
+  }
 
   let data;
   try {
@@ -37,18 +46,16 @@ export async function onRequestPost(context) {
   if (!email || !company) {
     return json({ ok: false, error: "company and email are required" }, 400);
   }
-  // light email sanity check
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return json({ ok: false, error: "invalid email" }, 400);
   }
 
   if (!env.AIRTABLE_API_KEY || !env.AIRTABLE_BASE_ID) {
-    // Not configured yet — don't lose the lead; report so the page can fall back to email.
     return json({ ok: false, error: "intake not configured" }, 503);
   }
 
   const table = encodeURIComponent(env.AIRTABLE_LEADS_TABLE || "Leads");
-  const url = `https://api.airtable.com/v0/${env.AIRTABLE_BASE_ID}/${table}`;
+  const airtableUrl = `https://api.airtable.com/v0/${env.AIRTABLE_BASE_ID}/${table}`;
 
   const fields = {
     Company: company,
@@ -58,13 +65,12 @@ export async function onRequestPost(context) {
     Source: "dnddefense.com",
     Status: "New",
   };
-  // drop empty values (Airtable can reject some empties)
   for (const k of Object.keys(fields)) {
     if (fields[k] === "" || fields[k] == null) delete fields[k];
   }
 
   try {
-    const r = await fetch(url, {
+    const r = await fetch(airtableUrl, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${env.AIRTABLE_API_KEY}`,
@@ -80,9 +86,4 @@ export async function onRequestPost(context) {
   } catch (e) {
     return json({ ok: false, error: "network" }, 502);
   }
-}
-
-// Friendly response for accidental GETs
-export async function onRequestGet() {
-  return new Response("POST a lead here.", { status: 405 });
 }
